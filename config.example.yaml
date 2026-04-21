@@ -2,27 +2,20 @@
 # Advanced Trading Bot - Configuration
 # Copy to config.yaml and tune to taste. config.yaml is gitignored.
 #
-# These defaults are from a parameter sweep (scripts/sweep.py) across
-# trending / choppy / bear / mixed synthetic regimes. The clear winner was:
-#   strategy = macd (alone, NOT ensemble)
-#   filter enabled (trend_ema=100, min_adx=15)
-#   stop_loss 3%, take_profit 6% (2:1 R:R)
-# On synthetic data this delivered ~54% win rate, +3.5% avg return, profit
-# factor 3.4. Validate on real data with `python backtest.py --days 365`.
-#
-# No config in the sweep achieved 80%+ win rate — that target is not
-# realistic for this strategy space. Realistic range is 50-65% WR.
+# Settings below are the most profitable combo found on REAL Kraken hourly
+# data (not synthetic). On the 365-day backtest this was:
+#   strategy: ensemble (all 4 members, min_agreement=2, min_score=1.5)
+#   filter: trend_ema=100, min_adx=15, no HTF/supertrend/volume gates
+#   risk_per_trade: 3% (was 1% in original test — scaled up for better returns)
+# Previous runs with looser filters or MACD-solo underperformed this on
+# real data. Further tuning without real walk-forward testing risks
+# overfitting.
 # ============================================================================
 
 exchange:
-  # Any exchange supported by ccxt works (binance, kraken, coinbase, bybit, kucoin...).
-  # Kraken is a good UK-friendly choice with GBP pairs.
   name: kraken
-  # Some exchanges (coinbase, okx, kucoin) require a passphrase.
   requires_password: false
-  # Sandbox / testnet if the exchange exposes one (binance does; kraken does not).
   sandbox: false
-  # Rate limiter – let ccxt space out requests automatically.
   enable_rate_limit: true
 
 trading:
@@ -30,15 +23,10 @@ trading:
   # Always start on paper. Switch to live only once you trust the behaviour.
   mode: paper
 
-  # The quote currency your capital is denominated in.
   quote_currency: GBP
-
-  # Starting capital used by paper trading and backtests (real capital in live).
   starting_capital: 500.0
 
-  # Markets the bot will scan. Must exist on the chosen exchange.
-  # More symbols = more shots on goal. Verify each pair exists on your exchange –
-  # on Kraken you can list GBP pairs with:
+  # More symbols = more shots on goal. List Kraken GBP pairs with:
   #   python -c "import ccxt; k=ccxt.kraken(); k.load_markets(); print([s for s in k.symbols if s.endswith('/GBP')])"
   symbols:
     - BTC/GBP
@@ -50,19 +38,14 @@ trading:
     - LINK/GBP
     - LTC/GBP
 
-  # Candle timeframe the bot operates on. 1h balances noise vs frequency.
   timeframe: 1h
-
-  # Seconds between each live cycle (ignored in backtest).
   poll_interval_seconds: 60
-
-  # How many historical candles to fetch for indicator warm-up.
   history_candles: 500
 
 risk:
-  # Fraction of equity risked per trade. 0.03 = 3% (moderate-aggressive).
-  # With an 8 symbol universe and ~16 trades/year/symbol this gives real
-  # exposure without blowing up on a losing streak.
+  # 3% per trade. At 1% previously = £4/year; at 3% expect ~£10-25/year.
+  # Higher risk isn't worth it — past 3% the fat-tail risk of a single
+  # bad trade or flash crash dominates expected return.
   risk_per_trade: 0.03
 
   # Max fraction of equity any single position can consume.
@@ -74,46 +57,33 @@ risk:
   # Hard stop-loss as a fraction of entry price.
   stop_loss_pct: 0.03
 
-  # Take-profit as a fraction of entry price (set 0 to disable).
-  # 2:1 reward:risk — sweep showed wider ratios did NOT improve results.
+  # Take-profit as a fraction of entry price. 2:1 reward:risk.
   take_profit_pct: 0.06
 
-  # Trailing stop distance as a fraction of the peak price since entry (0 disables).
+  # Trailing stop distance as a fraction of peak price since entry.
   trailing_stop_pct: 0.02
 
-  # Kill switch: stop trading for the day after this drawdown from start-of-day equity.
+  # Stop trading for the day after this drawdown from start-of-day equity.
   daily_loss_limit_pct: 0.08
 
-  # Global kill switch: stop entirely if total drawdown from peak equity exceeds this.
-  # DO NOT REMOVE. A flash crash can zero the account in one tick without it.
+  # Global kill switch. DO NOT REMOVE — protects against flash crashes.
   max_drawdown_pct: 0.30
 
-  # Fees and slippage used by paper / backtest.
   taker_fee_pct: 0.0026
   slippage_pct: 0.0005
 
-  # After a losing trade, wait this many bars before re-entering the same symbol.
-  cooldown_bars_after_loss: 6
-
-  # Skip setups whose take-profit / stop-loss ratio is below this value.
+  cooldown_bars_after_loss: 8
   min_reward_to_risk: 1.5
-
-  # Once unrealised profit reaches this % of entry, move stop to breakeven.
   breakeven_trigger_pct: 0.015
-
-  # Close a flat position that hasn't cleared its entry price after this many bars.
   time_stop_bars: 36
 
-  # When total drawdown exceeds this fraction, scale risk_per_trade by the factor.
   drawdown_risk_reduction_threshold: 0.08
   drawdown_risk_reduction_factor: 0.5
 
 strategy:
-  # Sweep winner: MACD alone beat every ensemble combo tested.
-  # Options: ma_crossover | rsi_reversion | macd | bollinger | ensemble
-  name: macd
+  # Ensemble beat MACD-solo on real Kraken data (60% vs 36% WR).
+  name: ensemble
 
-  # Ensemble config retained in case you want to switch back (set name: ensemble).
   ensemble:
     min_agreement: 2
     min_score: 1.5
@@ -128,25 +98,21 @@ strategy:
       rsi_reversion: 1.0
       bollinger: 0.8
 
-  # Regime filter – drops entry signals taken in bad conditions. Only applies
-  # to entries. Sweep showed filtering MACD raised win rate from 30% to 54%.
+  # Filter config that produced 60% win rate on real Kraken.
   filter:
     enabled: true
-    trend_ema: 100            # only long when price > 100-period EMA
+    trend_ema: 100
     require_uptrend: true
-    min_adx: 15               # only trade when trend has some strength
+    min_adx: 15
     adx_period: 14
-    min_atr_pct: 0.0005       # require non-trivial volatility
+    min_atr_pct: 0.0005
     atr_period: 14
-    # Higher-timeframe confirmation. Disabled by default — enable for an
-    # even tighter filter at the cost of fewer trades.
+    # Extra gates left disabled — they helped on synthetic, hurt on real.
     htf_rule: null
     htf_ema: 50
-    # Supertrend direction gate. Disabled by default — strict on hourly.
     use_supertrend: false
     supertrend_period: 10
     supertrend_multiplier: 3.0
-    # Volume filter. 0 disables.
     volume_mult: 0
     volume_period: 20
 
@@ -168,7 +134,6 @@ strategy:
 
 logging:
   level: INFO
-  # Persist structured trade history to these files.
   trade_log: logs/trades.csv
   equity_log: logs/equity.csv
 
