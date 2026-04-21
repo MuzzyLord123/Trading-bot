@@ -112,6 +112,11 @@ def _base_cfg() -> Config:
 def _improved_cfg() -> Config:
     cfg = _base_cfg()
     cfg.risk.cooldown_bars_after_loss = 12
+    cfg.risk.min_reward_to_risk = 1.5
+    cfg.risk.breakeven_trigger_pct = 0.02
+    cfg.risk.time_stop_bars = 48
+    cfg.risk.drawdown_risk_reduction_threshold = 0.05
+    cfg.risk.drawdown_risk_reduction_factor = 0.5
     cfg.strategy.ensemble = {
         "min_agreement": 2,
         "min_score": 1.8,
@@ -131,6 +136,13 @@ def _improved_cfg() -> Config:
         "adx_period": 14,
         "min_atr_pct": 0.0005,
         "atr_period": 14,
+        "htf_rule": "4h",
+        "htf_ema": 20,
+        "use_supertrend": True,
+        "supertrend_period": 10,
+        "supertrend_multiplier": 3.0,
+        "volume_mult": 0.0,
+        "volume_period": 20,
     }
     return cfg
 

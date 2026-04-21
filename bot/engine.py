@@ -48,6 +48,7 @@ class TradingEngine:
         )
         self._halted = False
         self._cooldown_ticks_left: dict[str, int] = {}
+        self._bars_held: dict[str, int] = {}
 
     def run_forever(self) -> None:
         self.exchange.load_markets()
@@ -99,7 +100,11 @@ class TradingEngine:
             if price is None:
                 continue
             pos.update_trailing(price)
-            reason = self.risk.should_exit(pos, price)
+            self.risk.maybe_move_to_breakeven(pos, price)
+            self._bars_held[symbol] = self._bars_held.get(symbol, 0) + 1
+            reason = self.risk.should_exit(
+                pos, price, bars_held=self._bars_held.get(symbol, 0)
+            )
             if reason:
                 self._close(pos, price, reason)
 
@@ -135,7 +140,9 @@ class TradingEngine:
         self._render_status(equity, prices)
 
     def _open(self, symbol: str, price: float, equity: float) -> None:
-        sizing = self.risk.size("long", price, equity, self.portfolio.cash)
+        sizing = self.risk.size(
+            "long", price, equity, self.portfolio.cash, portfolio=self.portfolio
+        )
         if sizing.amount <= 0:
             return
         amount = self.exchange.amount_to_precision(symbol, sizing.amount)
@@ -207,6 +214,7 @@ class TradingEngine:
         self.portfolio.realised_pnl += pnl
         symbol = pos.symbol
         del self.portfolio.positions[symbol]
+        self._bars_held.pop(symbol, None)
         if pnl < 0 and self.cfg.risk.cooldown_bars_after_loss > 0:
             self._cooldown_ticks_left[symbol] = self.cfg.risk.cooldown_bars_after_loss
 

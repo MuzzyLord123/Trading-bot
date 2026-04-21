@@ -122,6 +122,8 @@ class Backtester:
         last_prices: dict[str, float] = {}
         cooldown_until: dict[str, int] = {}
 
+        opened_at_bar: dict[str, int] = {}
+
         for bar_idx, ts in enumerate(merged_index):
             prices: dict[str, float] = {}
             window: dict[str, pd.DataFrame] = {}
@@ -141,11 +143,14 @@ class Backtester:
                 if price is None:
                     continue
                 pos.update_trailing(price)
-                reason = self.risk.should_exit(pos, price)
+                self.risk.maybe_move_to_breakeven(pos, price)
+                bars_held = bar_idx - opened_at_bar.get(symbol, bar_idx)
+                reason = self.risk.should_exit(pos, price, bars_held=bars_held)
                 if reason:
                     pnl = self._close(
                         portfolio, pos, price, ts, reason, fee, slip, result.trades
                     )
+                    opened_at_bar.pop(symbol, None)
                     if pnl < 0:
                         cooldown_until[symbol] = bar_idx + cooldown
 
@@ -163,6 +168,7 @@ class Backtester:
                         pnl = self._close(
                             portfolio, pos, prices[symbol], ts, "exit_signal", fee, slip, result.trades
                         )
+                        opened_at_bar.pop(symbol, None)
                         if pnl < 0:
                             cooldown_until[symbol] = bar_idx + cooldown
                         continue
@@ -172,7 +178,9 @@ class Backtester:
                             continue
                         price = prices[symbol]
                         fill_price = price * (1 + slip)
-                        sizing = self.risk.size("long", fill_price, equity, portfolio.cash)
+                        sizing = self.risk.size(
+                            "long", fill_price, equity, portfolio.cash, portfolio=portfolio
+                        )
                         if sizing.amount <= 0:
                             continue
                         cost = sizing.amount * fill_price
@@ -191,6 +199,7 @@ class Backtester:
                             trailing_stop_pct=self.cfg.risk.trailing_stop_pct,
                             opened_at=ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts,
                         )
+                        opened_at_bar[symbol] = bar_idx
 
             equity_rows.append({"timestamp": ts, "equity": equity, "cash": portfolio.cash})
 

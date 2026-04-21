@@ -58,6 +58,63 @@ def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     return tr.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
 
 
+def supertrend(
+    df: pd.DataFrame, period: int = 10, multiplier: float = 3.0
+) -> pd.DataFrame:
+    """Supertrend indicator. Returns line and direction (+1 uptrend, -1 downtrend)."""
+    atr_ = atr(df, period)
+    hl2 = ((df["high"] + df["low"]) / 2).values
+    atr_a = atr_.values
+    upper = hl2 + multiplier * atr_a
+    lower = hl2 - multiplier * atr_a
+    close = df["close"].values
+
+    n = len(df)
+    fu = np.full(n, np.nan)
+    fl = np.full(n, np.nan)
+    direction = np.ones(n, dtype=int)
+    line = np.full(n, np.nan)
+    initialised = False
+
+    for i in range(n):
+        if np.isnan(upper[i]) or np.isnan(lower[i]):
+            continue
+        if not initialised:
+            fu[i] = upper[i]
+            fl[i] = lower[i]
+            direction[i] = 1
+            line[i] = lower[i]
+            initialised = True
+            continue
+
+        fu[i] = (
+            upper[i]
+            if (upper[i] < fu[i - 1] or close[i - 1] > fu[i - 1])
+            else fu[i - 1]
+        )
+        fl[i] = (
+            lower[i]
+            if (lower[i] > fl[i - 1] or close[i - 1] < fl[i - 1])
+            else fl[i - 1]
+        )
+        if direction[i - 1] == 1:
+            if close[i] < fl[i]:
+                direction[i] = -1
+                line[i] = fu[i]
+            else:
+                direction[i] = 1
+                line[i] = fl[i]
+        else:
+            if close[i] > fu[i]:
+                direction[i] = 1
+                line[i] = fl[i]
+            else:
+                direction[i] = -1
+                line[i] = fu[i]
+
+    return pd.DataFrame({"line": line, "direction": direction}, index=df.index)
+
+
 def adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
     """Average Directional Index – strength of the trend regardless of direction.
 

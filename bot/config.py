@@ -42,6 +42,15 @@ class RiskConfig:
     slippage_pct: float = 0.0005
     # Bars to wait before re-entering the same symbol after a losing exit.
     cooldown_bars_after_loss: int = 12
+    # Minimum reward:risk ratio required to enter (take_profit/stop distance).
+    min_reward_to_risk: float = 1.5
+    # Once unrealised profit reaches this % of entry, move stop to breakeven.
+    breakeven_trigger_pct: float = 0.02
+    # Close position if no net profit after this many bars (0 disables).
+    time_stop_bars: int = 48
+    # Halve risk per trade while drawdown from peak exceeds this fraction.
+    drawdown_risk_reduction_threshold: float = 0.05
+    drawdown_risk_reduction_factor: float = 0.5
 
 
 @dataclass

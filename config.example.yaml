@@ -73,6 +73,23 @@ risk:
   # symbol. Prevents whipsaw bleeding.
   cooldown_bars_after_loss: 12
 
+  # Skip setups whose take-profit / stop-loss ratio is below this value.
+  # Ensures winners pay for losers even at a modest win rate.
+  min_reward_to_risk: 1.5
+
+  # Once unrealised profit reaches this % of entry, move stop to breakeven.
+  # Locks in "can't lose" on winners. 0 disables.
+  breakeven_trigger_pct: 0.02
+
+  # Close a flat position that hasn't cleared its entry price after this many
+  # bars. Kills dead trades that tie up capital. 0 disables.
+  time_stop_bars: 48
+
+  # When total drawdown exceeds this fraction, scale risk_per_trade by the
+  # reduction factor. Prevents doubling down during bad streaks.
+  drawdown_risk_reduction_threshold: 0.05
+  drawdown_risk_reduction_factor: 0.5
+
 strategy:
   # Which strategy to run. See bot/strategies/ for options or build your own.
   # Options: ma_crossover | rsi_reversion | macd | bollinger | ensemble
@@ -100,12 +117,24 @@ strategy:
   # to entries (longs). Exit signals always pass through.
   filter:
     enabled: true
-    trend_ema: 200          # only long when price > 200-period EMA
+    trend_ema: 200            # only long when price > 200-period EMA
     require_uptrend: true
-    min_adx: 20             # only trade when ADX shows a real trend
+    min_adx: 20               # only trade when ADX shows a real trend
     adx_period: 14
-    min_atr_pct: 0.001      # require non-trivial volatility
+    min_atr_pct: 0.001        # require non-trivial volatility
     atr_period: 14
+    # Higher-timeframe confirmation. Resamples the bar feed into htf_rule
+    # (pandas offset alias, e.g. '4h', '1D') and requires an uptrend there.
+    # Set htf_rule: null to disable.
+    htf_rule: 4h
+    htf_ema: 50
+    # Supertrend direction gate (only enter when supertrend direction is +1).
+    use_supertrend: true
+    supertrend_period: 10
+    supertrend_multiplier: 3.0
+    # Require entry bar volume >= volume_mult * rolling mean. 0 disables.
+    volume_mult: 1.2
+    volume_period: 20
 
   params:
     ma_crossover:
