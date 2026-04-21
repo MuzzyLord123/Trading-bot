@@ -1,0 +1,10 @@
+ccxt>=4.3.0
+pandas>=2.1.0
+numpy>=1.26.0
+PyYAML>=6.0.1
+python-dotenv>=1.0.1
+rich>=13.7.0
+click>=8.1.7
+tenacity>=8.2.3
+requests>=2.31.0
+pytest>=8.0.0

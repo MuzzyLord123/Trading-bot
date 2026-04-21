@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+config.yaml
+!config.example.yaml
+
+# Runtime artefacts
+logs/
+*.log
+data/
+*.csv
+*.parquet
+*.sqlite
+*.db
+state/
+reports/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp

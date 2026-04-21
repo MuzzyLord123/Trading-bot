@@ -1,0 +1,109 @@
+# ============================================================================
+# Advanced Trading Bot - Configuration
+# Copy to config.yaml and tune to taste. config.yaml is gitignored.
+# ============================================================================
+
+exchange:
+  # Any exchange supported by ccxt works (binance, kraken, coinbase, bybit, kucoin...).
+  # Kraken is a good UK-friendly choice with GBP pairs.
+  name: kraken
+  # Some exchanges (coinbase, okx, kucoin) require a passphrase.
+  requires_password: false
+  # Sandbox / testnet if the exchange exposes one (binance does; kraken does not).
+  sandbox: false
+  # Rate limiter – let ccxt space out requests automatically.
+  enable_rate_limit: true
+
+trading:
+  # 'paper' simulates fills against real prices, 'live' sends real orders.
+  # Always start on paper. Switch to live only once you trust the behaviour.
+  mode: paper
+
+  # The quote currency your capital is denominated in.
+  quote_currency: GBP
+
+  # Starting capital used by paper trading and backtests (real capital in live).
+  starting_capital: 500.0
+
+  # Markets the bot will scan. Must exist on the chosen exchange.
+  symbols:
+    - BTC/GBP
+    - ETH/GBP
+    - SOL/GBP
+
+  # Candle timeframe the bot operates on.
+  timeframe: 1h
+
+  # Seconds between each live cycle (ignored in backtest).
+  poll_interval_seconds: 60
+
+  # How many historical candles to fetch for indicator warm-up.
+  history_candles: 500
+
+risk:
+  # Fraction of equity risked per trade (0.01 = 1%). Keep small.
+  risk_per_trade: 0.01
+
+  # Max fraction of equity any single position can consume.
+  max_position_pct: 0.25
+
+  # Max simultaneous open positions.
+  max_open_positions: 3
+
+  # Hard stop-loss as a fraction of entry price.
+  stop_loss_pct: 0.03
+
+  # Take-profit as a fraction of entry price (set 0 to disable).
+  take_profit_pct: 0.06
+
+  # Trailing stop distance as a fraction of the peak price since entry (0 disables).
+  trailing_stop_pct: 0.02
+
+  # Kill switch: stop trading for the day after this drawdown from start-of-day equity.
+  daily_loss_limit_pct: 0.05
+
+  # Global kill switch: stop entirely if total drawdown from peak equity exceeds this.
+  max_drawdown_pct: 0.20
+
+  # Fees and slippage used by paper / backtest.
+  taker_fee_pct: 0.0026
+  slippage_pct: 0.0005
+
+strategy:
+  # Which strategy to run. See bot/strategies/ for options or build your own.
+  # Options: ma_crossover | rsi_reversion | macd | bollinger | ensemble
+  name: ensemble
+
+  # Ensemble requires at least `min_agreement` sub-strategies to agree.
+  ensemble:
+    min_agreement: 2
+    members:
+      - ma_crossover
+      - rsi_reversion
+      - macd
+      - bollinger
+
+  params:
+    ma_crossover:
+      fast: 20
+      slow: 50
+    rsi_reversion:
+      period: 14
+      oversold: 30
+      overbought: 70
+    macd:
+      fast: 12
+      slow: 26
+      signal: 9
+    bollinger:
+      period: 20
+      std: 2.0
+
+logging:
+  level: INFO
+  # Persist structured trade history to these files.
+  trade_log: logs/trades.csv
+  equity_log: logs/equity.csv
+
+notifications:
+  telegram: false
