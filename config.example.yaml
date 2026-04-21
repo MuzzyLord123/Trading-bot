@@ -69,19 +69,43 @@ risk:
   taker_fee_pct: 0.0026
   slippage_pct: 0.0005
 
+  # After a losing trade, wait this many bars before re-entering the same
+  # symbol. Prevents whipsaw bleeding.
+  cooldown_bars_after_loss: 12
+
 strategy:
   # Which strategy to run. See bot/strategies/ for options or build your own.
   # Options: ma_crossover | rsi_reversion | macd | bollinger | ensemble
   name: ensemble
 
-  # Ensemble requires at least `min_agreement` sub-strategies to agree.
+  # Ensemble combines sub-strategies. Two gates must pass to fire:
+  #   - at least `min_agreement` members vote the same direction
+  #   - the weighted score must reach `min_score`
+  # Weights let you trust some strategies more than others.
   ensemble:
     min_agreement: 2
+    min_score: 2.0
     members:
       - ma_crossover
       - rsi_reversion
       - macd
       - bollinger
+    weights:
+      ma_crossover: 1.2
+      macd: 1.2
+      rsi_reversion: 1.0
+      bollinger: 0.8
+
+  # Regime filter – drops entry signals taken in bad conditions. Only applies
+  # to entries (longs). Exit signals always pass through.
+  filter:
+    enabled: true
+    trend_ema: 200          # only long when price > 200-period EMA
+    require_uptrend: true
+    min_adx: 20             # only trade when ADX shows a real trend
+    adx_period: 14
+    min_atr_pct: 0.001      # require non-trivial volatility
+    atr_period: 14
 
   params:
     ma_crossover:

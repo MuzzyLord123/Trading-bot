@@ -40,6 +40,8 @@ class RiskConfig:
     max_drawdown_pct: float = 0.20
     taker_fee_pct: float = 0.0026
     slippage_pct: float = 0.0005
+    # Bars to wait before re-entering the same symbol after a losing exit.
+    cooldown_bars_after_loss: int = 12
 
 
 @dataclass
@@ -47,6 +49,7 @@ class StrategyConfig:
     name: str = "ensemble"
     ensemble: dict[str, Any] = field(default_factory=dict)
     params: dict[str, dict[str, Any]] = field(default_factory=dict)
+    filter: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

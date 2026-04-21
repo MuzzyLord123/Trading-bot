@@ -117,10 +117,12 @@ class Backtester:
 
         fee = self.cfg.risk.taker_fee_pct
         slip = self.cfg.risk.slippage_pct
+        cooldown = self.cfg.risk.cooldown_bars_after_loss
         equity_rows: list[dict] = []
         last_prices: dict[str, float] = {}
+        cooldown_until: dict[str, int] = {}
 
-        for ts in merged_index:
+        for bar_idx, ts in enumerate(merged_index):
             prices: dict[str, float] = {}
             window: dict[str, pd.DataFrame] = {}
             for symbol, df in data.items():
@@ -141,7 +143,11 @@ class Backtester:
                 pos.update_trailing(price)
                 reason = self.risk.should_exit(pos, price)
                 if reason:
-                    self._close(portfolio, pos, price, ts, reason, fee, slip, result.trades)
+                    pnl = self._close(
+                        portfolio, pos, price, ts, reason, fee, slip, result.trades
+                    )
+                    if pnl < 0:
+                        cooldown_until[symbol] = bar_idx + cooldown
 
             equity = portfolio.equity(prices)
             portfolio.mark_day(equity)
@@ -154,12 +160,16 @@ class Backtester:
                     pos = portfolio.positions.get(symbol)
 
                     if pos is not None and sig < 0:
-                        self._close(
+                        pnl = self._close(
                             portfolio, pos, prices[symbol], ts, "exit_signal", fee, slip, result.trades
                         )
+                        if pnl < 0:
+                            cooldown_until[symbol] = bar_idx + cooldown
                         continue
 
                     if pos is None and sig > 0 and self.risk.can_open(portfolio):
+                        if bar_idx < cooldown_until.get(symbol, 0):
+                            continue
                         price = prices[symbol]
                         fill_price = price * (1 + slip)
                         sizing = self.risk.size("long", fill_price, equity, portfolio.cash)
@@ -215,7 +225,7 @@ class Backtester:
         fee: float,
         slip: float,
         trades: list[dict],
-    ) -> None:
+    ) -> float:
         fill_price = price * (1 - slip)
         proceeds = pos.amount * fill_price
         fee_cost = proceeds * fee
@@ -234,6 +244,7 @@ class Backtester:
                 "reason": reason,
             }
         )
+        return pnl
 
 
 def _aligned_timestamps(data: dict[str, pd.DataFrame]) -> list:
@@ -250,6 +261,7 @@ def build_backtester(cfg: Config) -> Backtester:
         cfg.strategy.name,
         cfg.strategy.params,
         cfg.strategy.ensemble,
+        cfg.strategy.filter,
     )
     risk = RiskManager(cfg.risk)
     return Backtester(cfg, exchange, strategy, risk)

@@ -47,6 +47,7 @@ class TradingEngine:
             else NullNotifier()
         )
         self._halted = False
+        self._cooldown_ticks_left: dict[str, int] = {}
 
     def run_forever(self) -> None:
         self.exchange.load_markets()
@@ -88,6 +89,11 @@ class TradingEngine:
             log.warning("No price data this tick")
             return
 
+        for symbol in list(self._cooldown_ticks_left.keys()):
+            self._cooldown_ticks_left[symbol] -= 1
+            if self._cooldown_ticks_left[symbol] <= 0:
+                del self._cooldown_ticks_left[symbol]
+
         for symbol, pos in list(self.portfolio.positions.items()):
             price = prices.get(symbol)
             if price is None:
@@ -114,6 +120,8 @@ class TradingEngine:
                 if pos is not None and sig < 0:
                     self._close(pos, prices[symbol], "exit_signal")
                 elif pos is None and sig > 0 and self.risk.can_open(self.portfolio):
+                    if symbol in self._cooldown_ticks_left:
+                        continue
                     self._open(symbol, prices[symbol], equity)
 
         self.equity_log.write(
@@ -197,7 +205,10 @@ class TradingEngine:
         pnl = (fill_price - pos.entry_price) * amount - fee_cost
         self.portfolio.cash += proceeds - fee_cost
         self.portfolio.realised_pnl += pnl
-        del self.portfolio.positions[pos.symbol]
+        symbol = pos.symbol
+        del self.portfolio.positions[symbol]
+        if pnl < 0 and self.cfg.risk.cooldown_bars_after_loss > 0:
+            self._cooldown_ticks_left[symbol] = self.cfg.risk.cooldown_bars_after_loss
 
         self.trade_log.write(
             {
@@ -245,6 +256,7 @@ def build_engine(cfg: Config) -> TradingEngine:
         cfg.strategy.name,
         cfg.strategy.params,
         cfg.strategy.ensemble,
+        cfg.strategy.filter,
     )
     risk = RiskManager(cfg.risk)
     return TradingEngine(cfg, exchange, strategy, risk)

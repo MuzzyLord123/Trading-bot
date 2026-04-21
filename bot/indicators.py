@@ -56,3 +56,38 @@ def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
         axis=1,
     ).max(axis=1)
     return tr.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+
+
+def adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    """Average Directional Index – strength of the trend regardless of direction.
+
+    ADX > 25 generally indicates a strong trend; below 20 indicates chop.
+    """
+    high = df["high"]
+    low = df["low"]
+    close_prev = df["close"].shift(1)
+
+    up_move = high.diff()
+    down_move = -low.diff()
+    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+
+    tr = pd.concat(
+        [
+            (high - low),
+            (high - close_prev).abs(),
+            (low - close_prev).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+
+    atr_ = tr.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    plus_di = 100 * pd.Series(plus_dm, index=df.index).ewm(
+        alpha=1 / period, adjust=False, min_periods=period
+    ).mean() / atr_.replace(0.0, np.nan)
+    minus_di = 100 * pd.Series(minus_dm, index=df.index).ewm(
+        alpha=1 / period, adjust=False, min_periods=period
+    ).mean() / atr_.replace(0.0, np.nan)
+
+    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0.0, np.nan)
+    return dx.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
