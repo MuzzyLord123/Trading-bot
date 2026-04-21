@@ -232,13 +232,11 @@ def build_configs() -> list[SweepConfig]:
     member_sets: list[tuple[str, list[str]]] = [
         ("all", ["ma_crossover", "rsi_reversion", "macd", "bollinger"]),
         ("trend", ["ma_crossover", "macd"]),
-        ("rev", ["rsi_reversion", "bollinger"]),
-        ("macd_ma", ["ma_crossover", "macd"]),
         ("macd_rsi", ["rsi_reversion", "macd"]),
     ]
     for mname, members in member_sets:
-        for min_agree in [1, 2, len(members)]:
-            for min_score in [0.8, 1.2, 1.8, 2.5]:
+        for min_agree in [1, 2]:
+            for min_score in [1.0, 1.8]:
                 if min_agree > len(members):
                     continue
                 configs.append(
@@ -255,23 +253,39 @@ def build_configs() -> list[SweepConfig]:
 
     # --- 4. Filter tightness on the ensemble ----------------------------
     for trend_ema in [50, 100, 200]:
-        for min_adx in [10, 15, 20, 25]:
-            for st in [False, True]:
-                configs.append(
-                    SweepConfig(
-                        f"ens_filt_ema{trend_ema}_adx{min_adx}_st{int(st)}",
-                        "ensemble",
-                        tp_pct=0.06,
-                        sl_pct=0.03,
-                        members=["ma_crossover", "rsi_reversion", "macd", "bollinger"],
-                        min_agreement=2,
-                        min_score=1.5,
-                        filter_enabled=True,
-                        trend_ema=trend_ema,
-                        min_adx=min_adx,
-                        use_supertrend=st,
-                    )
+        for min_adx in [10, 20]:
+            configs.append(
+                SweepConfig(
+                    f"ens_filt_ema{trend_ema}_adx{min_adx}",
+                    "ensemble",
+                    tp_pct=0.06,
+                    sl_pct=0.03,
+                    members=["ma_crossover", "rsi_reversion", "macd", "bollinger"],
+                    min_agreement=2,
+                    min_score=1.5,
+                    filter_enabled=True,
+                    trend_ema=trend_ema,
+                    min_adx=min_adx,
                 )
+            )
+
+    # --- 5. Best-guess "high WR scalp" configs --------------------------
+    for tp, sl in [(0.01, 0.04), (0.015, 0.05), (0.02, 0.06)]:
+        configs.append(
+            SweepConfig(
+                f"scalp_tp{tp:.3f}_sl{sl:.3f}",
+                "ensemble",
+                tp_pct=tp,
+                sl_pct=sl,
+                members=["ma_crossover", "rsi_reversion", "macd", "bollinger"],
+                min_agreement=2,
+                min_score=1.5,
+                filter_enabled=True,
+                trend_ema=100,
+                min_adx=15,
+                min_reward_to_risk=0.1,  # ratio would reject these otherwise
+            )
+        )
 
     return configs
 
@@ -280,11 +294,15 @@ def build_configs() -> list[SweepConfig]:
 # Runner.
 # ---------------------------------------------------------------------------
 def main() -> None:
-    n_bars = 2000
-    seeds = [1, 2, 3]
+    import sys
+    n_bars = 1200
+    seeds = [1, 2]
     configs = build_configs()
-    print(f"Running {len(configs)} configs × {len(REGIMES)} regimes × {len(seeds)} seeds")
-    print(f"= {len(configs) * len(REGIMES) * len(seeds)} backtests")
+    print(
+        f"Running {len(configs)} configs x {len(REGIMES)} regimes x {len(seeds)} seeds "
+        f"= {len(configs) * len(REGIMES) * len(seeds)} backtests",
+        flush=True,
+    )
 
     # Pre-generate all data so every config sees identical markets.
     datasets: dict[tuple[str, int], pd.DataFrame] = {
@@ -293,8 +311,7 @@ def main() -> None:
 
     rows = []
     for i, cfg in enumerate(configs, 1):
-        if i % 20 == 0:
-            print(f"  [{i}/{len(configs)}] {cfg.name}")
+        print(f"  [{i}/{len(configs)}] {cfg.name}", flush=True)
         for (rname, seed), df in datasets.items():
             try:
                 stats = run_one(cfg, df)
