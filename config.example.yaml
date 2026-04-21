@@ -101,7 +101,9 @@ strategy:
   # Weights let you trust some strategies more than others.
   ensemble:
     min_agreement: 2
-    min_score: 2.0
+    # 1.5 is a reasonable default; raise to 2.0+ if you want to be more picky
+    # (fewer, higher-conviction trades) or lower to 1.0 for more activity.
+    min_score: 1.5
     members:
       - ma_crossover
       - rsi_reversion
@@ -115,25 +117,30 @@ strategy:
 
   # Regime filter – drops entry signals taken in bad conditions. Only applies
   # to entries (longs). Exit signals always pass through.
+  # Defaults below are tuned for ~30-80 trades/year on hourly crypto. Tighten
+  # (raise trend_ema/min_adx, re-enable htf_rule/use_supertrend) if you want
+  # higher win rate at the cost of fewer trades.
   filter:
     enabled: true
-    trend_ema: 200            # only long when price > 200-period EMA
+    trend_ema: 100            # only long when price > 100-period EMA
     require_uptrend: true
-    min_adx: 20               # only trade when ADX shows a real trend
+    min_adx: 15               # only trade when ADX shows some trend
     adx_period: 14
-    min_atr_pct: 0.001        # require non-trivial volatility
+    min_atr_pct: 0.0005       # require non-trivial volatility
     atr_period: 14
     # Higher-timeframe confirmation. Resamples the bar feed into htf_rule
     # (pandas offset alias, e.g. '4h', '1D') and requires an uptrend there.
-    # Set htf_rule: null to disable.
-    htf_rule: 4h
+    # Set htf_rule: null to disable. Disabled by default – re-enable once you
+    # have enough trade volume to trust the extra filter.
+    htf_rule: null
     htf_ema: 50
     # Supertrend direction gate (only enter when supertrend direction is +1).
-    use_supertrend: true
+    # Disabled by default – very strict on hourly data.
+    use_supertrend: false
     supertrend_period: 10
     supertrend_multiplier: 3.0
     # Require entry bar volume >= volume_mult * rolling mean. 0 disables.
-    volume_mult: 1.2
+    volume_mult: 0
     volume_period: 20
 
   params:
