@@ -35,7 +35,9 @@ trading:
   starting_capital: 500.0
 
   # Markets the bot will scan. Must exist on the chosen exchange.
-  # More symbols = more shots on goal. Verify each pair exists on your exchange.
+  # More symbols = more shots on goal. Verify each pair exists on your exchange –
+  # on Kraken you can list GBP pairs with:
+  #   python -c "import ccxt; k=ccxt.kraken(); k.load_markets(); print([s for s in k.symbols if s.endswith('/GBP')])"
   symbols:
     - BTC/GBP
     - ETH/GBP
@@ -44,7 +46,7 @@ trading:
     - DOT/GBP
     - XRP/GBP
     - LINK/GBP
-    - AVAX/GBP
+    - LTC/GBP
 
   # Candle timeframe the bot operates on. 1h balances noise vs frequency.
   # 15m gives more trades but more whipsaw; 4h is smoother but slower.
