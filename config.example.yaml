@@ -1,15 +1,17 @@
 # ============================================================================
-# Advanced Trading Bot - Configuration (AGGRESSIVE preset)
+# Advanced Trading Bot - Configuration
 # Copy to config.yaml and tune to taste. config.yaml is gitignored.
 #
-# THIS CONFIG IS TUNED FOR MAX ACTIVITY AND HIGH RISK/REWARD.
-# Expected behaviour: many more trades, higher average win, much larger
-# drawdowns. Realistic outcomes range from +5-15%/month in good regimes to
-# -30-50% drawdown in bad ones. You WILL have losing weeks.
-# If you want to reduce risk, the key levers are:
-#   risk.risk_per_trade (currently 0.05 = 5% of equity per trade)
-#   risk.max_position_pct (currently 0.50 = half your capital per position)
-#   risk.max_open_positions (currently 5)
+# These defaults are from a parameter sweep (scripts/sweep.py) across
+# trending / choppy / bear / mixed synthetic regimes. The clear winner was:
+#   strategy = macd (alone, NOT ensemble)
+#   filter enabled (trend_ema=100, min_adx=15)
+#   stop_loss 3%, take_profit 6% (2:1 R:R)
+# On synthetic data this delivered ~54% win rate, +3.5% avg return, profit
+# factor 3.4. Validate on real data with `python backtest.py --days 365`.
+#
+# No config in the sweep achieved 80%+ win rate — that target is not
+# realistic for this strategy space. Realistic range is 50-65% WR.
 # ============================================================================
 
 exchange:
@@ -49,7 +51,6 @@ trading:
     - LTC/GBP
 
   # Candle timeframe the bot operates on. 1h balances noise vs frequency.
-  # 15m gives more trades but more whipsaw; 4h is smoother but slower.
   timeframe: 1h
 
   # Seconds between each live cycle (ignored in backtest).
@@ -59,82 +60,63 @@ trading:
   history_candles: 500
 
 risk:
-  # Fraction of equity risked per trade. 0.05 = 5% — aggressive.
-  # With a 2.5% stop loss this means positions are 200% of equity
-  # notionally (capped by max_position_pct). 5 losers in a row = -25%.
-  risk_per_trade: 0.05
+  # Fraction of equity risked per trade. 0.03 = 3% (moderate-aggressive).
+  # With an 8 symbol universe and ~16 trades/year/symbol this gives real
+  # exposure without blowing up on a losing streak.
+  risk_per_trade: 0.03
 
   # Max fraction of equity any single position can consume.
-  # 0.5 = half your capital can be in one trade.
   max_position_pct: 0.5
 
-  # Max simultaneous open positions. More = more diversification but
-  # also more correlated exposure in a crypto-wide selloff.
-  max_open_positions: 5
+  # Max simultaneous open positions.
+  max_open_positions: 4
 
   # Hard stop-loss as a fraction of entry price.
-  # Tighter stop = larger position size for same risk, but more stop-outs.
-  stop_loss_pct: 0.025
+  stop_loss_pct: 0.03
 
   # Take-profit as a fraction of entry price (set 0 to disable).
-  # 9% TP vs 2.5% stop = 3.6:1 reward:risk — only need ~22% win rate to break even.
-  take_profit_pct: 0.09
+  # 2:1 reward:risk — sweep showed wider ratios did NOT improve results.
+  take_profit_pct: 0.06
 
   # Trailing stop distance as a fraction of the peak price since entry (0 disables).
-  # Wider trail lets winners run further.
-  trailing_stop_pct: 0.03
+  trailing_stop_pct: 0.02
 
   # Kill switch: stop trading for the day after this drawdown from start-of-day equity.
-  # Wider than default so one bad day doesn't shut down a recovery.
-  # Set to 1.0 to effectively disable (NOT recommended).
-  daily_loss_limit_pct: 0.10
+  daily_loss_limit_pct: 0.08
 
   # Global kill switch: stop entirely if total drawdown from peak equity exceeds this.
-  # DO NOT REMOVE THIS. A single flash crash or exchange bug can blow up the
-  # account in one tick without it. 0.40 = bot stops if equity falls below 60%
-  # of peak. Restart manually after reviewing.
-  max_drawdown_pct: 0.40
+  # DO NOT REMOVE. A flash crash can zero the account in one tick without it.
+  max_drawdown_pct: 0.30
 
   # Fees and slippage used by paper / backtest.
   taker_fee_pct: 0.0026
   slippage_pct: 0.0005
 
-  # After a losing trade, wait this many bars before re-entering the same
-  # symbol. Short cooldown = faster re-entry; 0 = none.
-  cooldown_bars_after_loss: 4
+  # After a losing trade, wait this many bars before re-entering the same symbol.
+  cooldown_bars_after_loss: 6
 
   # Skip setups whose take-profit / stop-loss ratio is below this value.
-  # With TP=9% and stop=2.5% the ratio is already ~3.6, so this barely bites.
   min_reward_to_risk: 1.5
 
   # Once unrealised profit reaches this % of entry, move stop to breakeven.
-  # Locks in "can't lose" on winners. 0 disables.
   breakeven_trigger_pct: 0.015
 
-  # Close a flat position that hasn't cleared its entry price after this many
-  # bars. Kills dead trades that tie up capital. 0 disables.
-  time_stop_bars: 24
+  # Close a flat position that hasn't cleared its entry price after this many bars.
+  time_stop_bars: 36
 
-  # When total drawdown exceeds this fraction, scale risk_per_trade by the
-  # reduction factor. Prevents doubling down during bad streaks.
-  # Kept enabled — disable only if you want to press harder into drawdowns
-  # (extremely risky).
-  drawdown_risk_reduction_threshold: 0.10
+  # When total drawdown exceeds this fraction, scale risk_per_trade by the factor.
+  drawdown_risk_reduction_threshold: 0.08
   drawdown_risk_reduction_factor: 0.5
 
 strategy:
-  # Which strategy to run. See bot/strategies/ for options or build your own.
+  # Sweep winner: MACD alone beat every ensemble combo tested.
   # Options: ma_crossover | rsi_reversion | macd | bollinger | ensemble
-  name: ensemble
+  name: macd
 
-  # Ensemble combines sub-strategies. Two gates must pass to fire:
-  #   - at least `min_agreement` members vote the same direction
-  #   - the weighted score must reach `min_score`
-  # Weights let you trust some strategies more than others.
-  # AGGRESSIVE: any single member firing can trigger an entry.
+  # Ensemble config retained in case you want to switch back (set name: ensemble).
   ensemble:
-    min_agreement: 1
-    min_score: 0.8
+    min_agreement: 2
+    min_score: 1.5
     members:
       - ma_crossover
       - rsi_reversion
@@ -147,24 +129,24 @@ strategy:
       bollinger: 0.8
 
   # Regime filter – drops entry signals taken in bad conditions. Only applies
-  # to entries (longs). Exit signals always pass through.
-  # AGGRESSIVE: minimal filtering — trade in almost any regime.
+  # to entries. Sweep showed filtering MACD raised win rate from 30% to 54%.
   filter:
     enabled: true
-    trend_ema: 50             # only long when price > 50-period EMA
+    trend_ema: 100            # only long when price > 100-period EMA
     require_uptrend: true
-    min_adx: 10               # allow even weakly-trending markets
+    min_adx: 15               # only trade when trend has some strength
     adx_period: 14
-    min_atr_pct: 0.0003       # require any meaningful volatility
+    min_atr_pct: 0.0005       # require non-trivial volatility
     atr_period: 14
-    # Higher-timeframe confirmation disabled for max activity.
+    # Higher-timeframe confirmation. Disabled by default — enable for an
+    # even tighter filter at the cost of fewer trades.
     htf_rule: null
     htf_ema: 50
-    # Supertrend direction gate disabled for max activity.
+    # Supertrend direction gate. Disabled by default — strict on hourly.
     use_supertrend: false
     supertrend_period: 10
     supertrend_multiplier: 3.0
-    # Volume filter disabled for max activity.
+    # Volume filter. 0 disables.
     volume_mult: 0
     volume_period: 20
 
