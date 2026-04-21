@@ -4,6 +4,7 @@ from __future__ import annotations
 import pandas as pd
 
 from ..indicators import adx, atr, ema, supertrend
+from ..sentiment import value_at as fng_value_at
 from .base import Signal, Strategy, StrategyContext
 
 
@@ -35,6 +36,7 @@ class FilteredStrategy(Strategy):
       4. Volatility floor: ATR / price >= ``min_atr_pct``.
       5. Supertrend direction: +1 (uptrend).
       6. Volume surge: last bar volume >= ``volume_mult`` * rolling mean.
+      7. Fear & Greed: index in [``fng_min``, ``fng_max``] at bar time.
     """
 
     name = "filtered"
@@ -55,6 +57,9 @@ class FilteredStrategy(Strategy):
         supertrend_multiplier: float = 3.0,
         volume_mult: float = 0.0,
         volume_period: int = 20,
+        fng_df: pd.DataFrame | None = None,
+        fng_min: int = 0,
+        fng_max: int = 100,
     ) -> None:
         self.inner = inner
         self.trend_ema = trend_ema
@@ -70,6 +75,9 @@ class FilteredStrategy(Strategy):
         self.supertrend_multiplier = supertrend_multiplier
         self.volume_mult = volume_mult
         self.volume_period = volume_period
+        self.fng_df = fng_df
+        self.fng_min = fng_min
+        self.fng_max = fng_max
 
     def min_history(self) -> int:
         base = self.inner.min_history()
@@ -124,6 +132,13 @@ class FilteredStrategy(Strategy):
             vol = df["volume"]
             avg = vol.rolling(self.volume_period).mean().iloc[-1]
             if pd.isna(avg) or vol.iloc[-1] < self.volume_mult * avg:
+                return Signal.FLAT
+
+        if self.fng_df is not None and not self.fng_df.empty:
+            fng = fng_value_at(self.fng_df, df["timestamp"].iloc[-1])
+            # If unavailable for this timestamp (e.g. backtest older than
+            # the F&G history), skip the gate rather than reject.
+            if fng is not None and not (self.fng_min <= fng <= self.fng_max):
                 return Signal.FLAT
 
         return Signal.LONG

@@ -116,6 +116,16 @@ strategy:
     volume_mult: 0
     volume_period: 20
 
+    # Crypto Fear & Greed index filter (free API from alternative.me).
+    # When enabled, only takes entries when F&G is in [fng_min, fng_max].
+    # Idea: skip entries during extreme greed (pump exhaustion) and extreme
+    # fear (catching falling knives). Expected impact: small — maybe raises
+    # win rate 2-5%, cuts trade count 20-30%. Set fng_enabled=true to try.
+    fng_enabled: true
+    fng_min: 25
+    fng_max: 80
+    fng_days: 400
+
   params:
     ma_crossover:
       fast: 20
