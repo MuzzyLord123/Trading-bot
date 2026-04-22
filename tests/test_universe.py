@@ -31,6 +31,29 @@ def test_load_nasdaq100_uses_fresh_cache():
     assert universe.load_nasdaq100() == ["AAPL", "MSFT", "NVDA"]
 
 
+def test_load_nasdaq100_falls_back_to_hardcoded(monkeypatch):
+    # No cache, no network -> must use hardcoded canonical list.
+    def _boom(url: str) -> str:
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(universe, "_get_url", _boom)
+    result = universe.load_nasdaq100()
+    assert len(result) == len(universe.NASDAQ100_HARDCODED)
+    # Spot-check a handful of expected names.
+    for expected in ["AAPL", "MSFT", "NVDA", "GOOGL", "TSLA", "META", "AMZN"]:
+        assert expected in result
+
+
+def test_nasdaq100_hardcoded_has_no_duplicates():
+    # Regression: duplicates would break dedup logic in expand_universe_tokens.
+    assert len(universe.NASDAQ100_HARDCODED) == len(set(universe.NASDAQ100_HARDCODED))
+
+
+def test_nasdaq100_hardcoded_size_sane():
+    # The index name is Nasdaq-100 for a reason.
+    assert 90 <= len(universe.NASDAQ100_HARDCODED) <= 110
+
+
 def test_expand_universe_tokens_leaves_regular_symbols_alone():
     _seed_cache(universe.SP500_CACHE, ["AAPL", "MSFT"])
     expanded = universe.expand_universe_tokens(["VWRL.L", "AMD"])

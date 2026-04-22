@@ -30,6 +30,25 @@ SP500_CACHE = Path("cache/sp500.csv")
 NASDAQ100_URL = "https://en.wikipedia.org/wiki/Nasdaq-100"
 NASDAQ100_CACHE = Path("cache/nasdaq100.csv")
 
+# Canonical Nasdaq-100 constituent tickers (late-2025 composition).
+# Used as a reliable fallback when Wikipedia is unreachable or its page
+# layout changes. Refreshed on every successful Wikipedia fetch — this
+# list is only consulted when the live fetch fails AND no cache exists.
+NASDAQ100_HARDCODED: list[str] = [
+    "ADBE", "ADP", "AMD", "ABNB", "ALNY", "GOOGL", "GOOG", "AMZN", "AEP",
+    "AMGN", "ADI", "AAPL", "AMAT", "APP", "ARM", "ASML", "TEAM", "ADSK",
+    "AXON", "BKR", "BKNG", "AVGO", "CDNS", "CHTR", "CTAS", "CSCO", "CCEP",
+    "CTSH", "CMCSA", "CEG", "CPRT", "CSGP", "COST", "CRWD", "CSX", "DDOG",
+    "DXCM", "FANG", "DASH", "EA", "EXC", "FAST", "FER", "FTNT", "GEHC",
+    "GILD", "HON", "IDXX", "INSM", "INTC", "INTU", "ISRG", "KDP", "KLAC",
+    "KHC", "LRCX", "LIN", "MAR", "MRVL", "MELI", "META", "MCHP", "MU",
+    "MSFT", "MSTR", "MDLZ", "MPWR", "MNST", "NFLX", "NVDA", "NXPI", "ODFL",
+    "ORLY", "PCAR", "PLTR", "PANW", "PAYX", "PYPL", "PDD", "PEP", "QCOM",
+    "REGN", "ROP", "ROST", "STX", "SHOP", "SBUX", "SNPS", "TTWO", "TSLA",
+    "TXN", "TRI", "TMUS", "VRSK", "VRTX", "WMT", "WBD", "WDC", "WDAY",
+    "XEL", "ZS",
+]
+
 CACHE_TTL_SECONDS = 7 * 24 * 3600  # one week
 # kept for backwards compat with old import sites
 SP500_TTL_SECONDS = CACHE_TTL_SECONDS
@@ -104,7 +123,14 @@ def load_sp500(force_refresh: bool = False) -> list[str]:
 
 
 def load_nasdaq100(force_refresh: bool = False) -> list[str]:
-    """Return the current Nasdaq-100 constituent tickers, yfinance-formatted."""
+    """Return the current Nasdaq-100 constituent tickers, yfinance-formatted.
+
+    Resolution order:
+      1. Fresh on-disk cache (written on any previous successful load).
+      2. Wikipedia (primary source – stays current with rebalances).
+      3. Stale cache if present (Wikipedia failed).
+      4. Hardcoded fallback list (last-resort, always available).
+    """
     if not force_refresh:
         cached = _load_cached(NASDAQ100_CACHE)
         if cached is not None:
@@ -114,14 +140,21 @@ def load_nasdaq100(force_refresh: bool = False) -> list[str]:
         # Wikipedia's Nasdaq-100 page uses "Ticker" (primary) but falls
         # back to "Symbol" historically.
         symbols = _extract_symbols(html, ("Ticker", "Symbol"))
+        _write_cache(NASDAQ100_CACHE, symbols)
+        log.info("Fetched %d Nasdaq-100 tickers from Wikipedia", len(symbols))
+        return symbols
     except Exception as exc:
-        log.warning("Nasdaq-100 fetch failed (%s); using cached copy if any", exc)
-        if NASDAQ100_CACHE.exists():
+        log.warning(
+            "Nasdaq-100 Wikipedia fetch failed (%s); using fallback", exc
+        )
+    if NASDAQ100_CACHE.exists():
+        try:
             return pd.read_csv(NASDAQ100_CACHE)["symbol"].astype(str).tolist()
-        raise
-    _write_cache(NASDAQ100_CACHE, symbols)
-    log.info("Fetched %d Nasdaq-100 tickers", len(symbols))
-    return symbols
+        except Exception:
+            pass
+    log.info("Using hardcoded Nasdaq-100 list (%d tickers)", len(NASDAQ100_HARDCODED))
+    _write_cache(NASDAQ100_CACHE, NASDAQ100_HARDCODED)
+    return list(NASDAQ100_HARDCODED)
 
 
 def _expand_single_token(up: str) -> list[str] | None:
