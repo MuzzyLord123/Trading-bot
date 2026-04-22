@@ -122,5 +122,6 @@ class Config:
                 "api_password": os.getenv("EXCHANGE_API_PASSWORD", ""),
                 "telegram_bot_token": os.getenv("TELEGRAM_BOT_TOKEN", ""),
                 "telegram_chat_id": os.getenv("TELEGRAM_CHAT_ID", ""),
+                "trading212_api_key": os.getenv("TRADING212_API_KEY", ""),
             },
         )

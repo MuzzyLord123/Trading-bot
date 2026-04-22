@@ -9,6 +9,7 @@ import pandas as pd
 
 from .config import Config
 from .exchange import Exchange
+from .factory import build_exchange
 from .logger import CsvLogger
 from .portfolio import Portfolio, Position
 from .risk import RiskManager
@@ -265,7 +266,7 @@ def _aligned_timestamps(data: dict[str, pd.DataFrame]) -> list:
 
 
 def build_backtester(cfg: Config) -> Backtester:
-    exchange = Exchange(cfg)
+    exchange = build_exchange(cfg)
     strategy = build_strategy_from_config(
         cfg.strategy.name,
         cfg.strategy.params,

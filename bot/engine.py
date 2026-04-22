@@ -8,11 +8,13 @@ from rich.table import Table
 
 from .config import Config
 from .exchange import Exchange
+from .factory import build_exchange, is_stock_platform
 from .logger import CsvLogger, console
 from .news import NewsMonitor, NewsSignal
 from .notifications import NullNotifier, TelegramNotifier
 from .portfolio import Portfolio, Position
 from .risk import RiskManager
+from .stocks import is_stock_market_open
 from .strategies import Strategy, StrategyContext, build_strategy_from_config
 
 log = logging.getLogger("bot.engine")
@@ -84,6 +86,9 @@ class TradingEngine:
             time.sleep(self.cfg.trading.poll_interval_seconds)
 
     def tick(self) -> None:
+        if is_stock_platform(self.cfg) and not is_stock_market_open():
+            log.debug("Market closed – skipping tick")
+            return
         prices: dict[str, float] = {}
         candles: dict[str, object] = {}
         for symbol in self.cfg.trading.symbols:
@@ -318,7 +323,7 @@ def _now_iso() -> str:
 
 
 def build_engine(cfg: Config) -> TradingEngine:
-    exchange = Exchange(cfg)
+    exchange = build_exchange(cfg)
     strategy = build_strategy_from_config(
         cfg.strategy.name,
         cfg.strategy.params,

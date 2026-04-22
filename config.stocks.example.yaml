@@ -1,0 +1,169 @@
+# ============================================================================
+# Trading 212 Invest (UK stocks & ETFs) - example config
+#
+# Copy to config.yaml and tune. Assumes:
+#   * You have Trading 212 API access (request from Settings -> API in app)
+#   * TRADING212_API_KEY is set in .env
+#   * You intend to trade stocks/ETFs, not CFDs
+#
+# Data: Yahoo Finance (free, no auth). Execution: Trading 212 REST.
+# Backtest uses yfinance too — no historical data from T212.
+# ============================================================================
+
+exchange:
+  name: trading212
+  requires_password: false
+  # sandbox: true -> uses demo.trading212.com (set a demo API key in .env).
+  sandbox: false
+  enable_rate_limit: true
+
+trading:
+  # Always start on paper. Switch to 'live' only after a month of clean paper runs.
+  mode: paper
+
+  quote_currency: GBP
+
+  # Your account size. Used for paper/backtest sizing; live uses real balance.
+  starting_capital: 33000.0
+
+  # Yahoo Finance tickers. Use ".L" suffix for LSE listings, plain for US.
+  # A mix of global ETFs + large-cap US names is a sensible default; tune to
+  # what you actually trade. The bot is long-only so trending names work best.
+  symbols:
+    - VWRL.L        # Vanguard FTSE All-World (global equity)
+    - VUAG.L        # Vanguard S&P 500 (accumulating)
+    - AAPL
+    - MSFT
+    - GOOGL
+    - NVDA
+    - META
+    - AMZN
+
+  # Daily bars are the standard for stock strategies. 1h is supported but
+  # fewer data points per symbol per day = fewer signals.
+  timeframe: 1d
+
+  # Between ticks. With daily bars you only really need to check once a day
+  # near the close (but 5 min polling is fine for paper).
+  poll_interval_seconds: 300
+
+  history_candles: 300   # ~14 months of daily bars
+
+risk:
+  # 1% per trade is the default for accounts of this size. 1% of £33k = £330
+  # per losing trade. 10 losers in a row = -10% equity (£3,300). Historically
+  # survivable with this strategy.
+  risk_per_trade: 0.01
+
+  # Max single position as a fraction of equity. 10% = max £3,300 per stock.
+  # This prevents concentration risk if sizing maths gets aggressive.
+  max_position_pct: 0.10
+
+  # Max simultaneous open positions across all symbols.
+  max_open_positions: 5
+
+  # Stops sized for daily-bar stock volatility (smaller than crypto hourly).
+  stop_loss_pct: 0.04
+  take_profit_pct: 0.10     # 2.5:1 R:R
+
+  trailing_stop_pct: 0.03
+
+  # Halt trading after -3% from start-of-day equity.
+  daily_loss_limit_pct: 0.03
+
+  # Hard kill switch: stop entirely if total drawdown from peak > 15%.
+  # On £33k that's a £4,950 drawdown. Restart manually after reviewing.
+  max_drawdown_pct: 0.15
+
+  # Trading 212 Invest is £0 commission on stocks/ETFs. Spread is the cost.
+  # Rough spread for liquid names ~0.05-0.10%; FX spread on US stocks ~0.15%
+  # one-way. Combine conservatively.
+  taker_fee_pct: 0.0015
+  slippage_pct: 0.0005
+
+  # Bars (days) to wait before re-entering a symbol after a losing exit.
+  cooldown_bars_after_loss: 3
+
+  min_reward_to_risk: 1.5
+  breakeven_trigger_pct: 0.02
+  # Close a flat position after 20 trading days (~1 calendar month).
+  time_stop_bars: 20
+
+  drawdown_risk_reduction_threshold: 0.05
+  drawdown_risk_reduction_factor: 0.5
+
+strategy:
+  # Ensemble proved best on real data; keep it.
+  name: ensemble
+
+  ensemble:
+    min_agreement: 2
+    min_score: 1.5
+    members:
+      - ma_crossover
+      - rsi_reversion
+      - macd
+      - bollinger
+    weights:
+      ma_crossover: 1.2
+      macd: 1.2
+      rsi_reversion: 1.0
+      bollinger: 0.8
+
+  # Regime filters tuned for daily stock data. The trend EMA is longer
+  # because daily bars are more persistent than hourly crypto.
+  filter:
+    enabled: true
+    trend_ema: 50            # "above 50-day EMA" = in uptrend
+    require_uptrend: true
+    min_adx: 18
+    adx_period: 14
+    min_atr_pct: 0.005       # 0.5% daily range – filters out dead stocks
+    atr_period: 14
+    # Weekly-trend confirmation.
+    htf_rule: 1W
+    htf_ema: 20
+    use_supertrend: false
+    supertrend_period: 10
+    supertrend_multiplier: 3.0
+    volume_mult: 0
+    volume_period: 20
+    # Fear & Greed is crypto-only. Leave disabled for stocks.
+    fng_enabled: false
+    fng_min: 25
+    fng_max: 80
+    fng_days: 400
+
+  params:
+    ma_crossover:
+      fast: 10
+      slow: 30
+    rsi_reversion:
+      period: 14
+      oversold: 30
+      overbought: 70
+    macd:
+      fast: 12
+      slow: 26
+      signal: 9
+    bollinger:
+      period: 20
+      std: 2.0
+
+logging:
+  level: INFO
+  trade_log: logs/trades.csv
+  equity_log: logs/equity.csv
+
+notifications:
+  telegram: false
+
+# News filter is crypto-RSS-keyword tuned. Disabled by default for stocks —
+# the keyword map in bot/news.py targets crypto events (hacks, halvings).
+# A stock version would swap in earnings/guidance/SEC-filing keywords.
+news:
+  enabled: false
+  mode: defensive
+  major_threshold: 5.0
+  max_age_minutes: 120
+  blackout_seconds: 14400
