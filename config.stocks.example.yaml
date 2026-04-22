@@ -51,12 +51,14 @@ risk:
   # survivable with this strategy.
   risk_per_trade: 0.01
 
-  # Max single position as a fraction of equity. 10% = max £3,300 per stock.
-  # This prevents concentration risk if sizing maths gets aggressive.
-  max_position_pct: 0.10
+  # Max single position as a fraction of equity. 7% = ~£2,300 per stock.
+  # Lower than before to fit more concurrent positions without over-deploying.
+  max_position_pct: 0.07
 
   # Max simultaneous open positions across all symbols.
-  max_open_positions: 5
+  # Raised from 5 -> 10 to unlock more of the S&P 500 signals the scanner
+  # is finding. 10 * 7% = 70% deployed max. Leaves cash for rotation.
+  max_open_positions: 10
 
   # Stops sized for daily-bar stock volatility (smaller than crypto hourly).
   stop_loss_pct: 0.04
@@ -78,12 +80,13 @@ risk:
   slippage_pct: 0.0005
 
   # Bars (days) to wait before re-entering a symbol after a losing exit.
-  cooldown_bars_after_loss: 3
+  cooldown_bars_after_loss: 1
 
   min_reward_to_risk: 1.5
   breakeven_trigger_pct: 0.02
-  # Close a flat position after 20 trading days (~1 calendar month).
-  time_stop_bars: 20
+  # Close a flat position after 12 trading days (~2.5 weeks). Faster
+  # turnover frees slots for new signals. Was 20.
+  time_stop_bars: 12
 
   drawdown_risk_reduction_threshold: 0.05
   drawdown_risk_reduction_factor: 0.5
@@ -148,20 +151,22 @@ strategy:
     # the falling knife." 0 disables.
     news_gap_threshold: 0.05
 
+  # Indicator periods shortened from crypto-hourly defaults to daily-stock
+  # appropriate values. Roughly doubles signal frequency per stock/year.
   params:
     ma_crossover:
-      fast: 10
-      slow: 30
+      fast: 8
+      slow: 21
     rsi_reversion:
-      period: 14
+      period: 10
       oversold: 30
       overbought: 70
     macd:
-      fast: 12
-      slow: 26
-      signal: 9
+      fast: 8
+      slow: 21
+      signal: 5
     bollinger:
-      period: 20
+      period: 15
       std: 2.0
 
 logging:
