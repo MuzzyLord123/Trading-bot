@@ -37,15 +37,17 @@ trading:
     - SP500
     - NASDAQ100
 
-  # Daily bars are the standard for stock strategies. 1h is supported but
-  # fewer data points per symbol per day = fewer signals.
-  timeframe: 1d
+  # Hourly stock bars. ~6-7 bars per trading day per stock = 6-7x more
+  # signal opportunities than daily. WARNING: intraday data is noisier;
+  # win rate typically drops 5-15% vs daily. This config is optimised
+  # for TRADE COUNT, not win rate.
+  timeframe: 1h
 
-  # Between ticks. With daily bars you only really need to check once a day
-  # near the close (but 5 min polling is fine for paper).
+  # Between ticks in live mode. Hourly bars close every hour, so polling
+  # every 5 min is plenty.
   poll_interval_seconds: 300
 
-  history_candles: 300   # ~14 months of daily bars
+  history_candles: 1000   # ~30 weeks of hourly bars (yfinance caps 60m at 730d)
 
 risk:
   # 1% per trade is the default for accounts of this size. 1% of £33k = £330
@@ -58,9 +60,8 @@ risk:
   max_position_pct: 0.07
 
   # Max simultaneous open positions across all symbols.
-  # Raised from 5 -> 10 to unlock more of the S&P 500 signals the scanner
-  # is finding. 10 * 7% = 70% deployed max. Leaves cash for rotation.
-  max_open_positions: 10
+  # 15 on hourly bars = faster turnover = more trades/year.
+  max_open_positions: 15
 
   # Stops sized for daily-bar stock volatility (smaller than crypto hourly).
   stop_loss_pct: 0.04
@@ -81,14 +82,14 @@ risk:
   taker_fee_pct: 0.0015
   slippage_pct: 0.0005
 
-  # Bars (days) to wait before re-entering a symbol after a losing exit.
-  cooldown_bars_after_loss: 1
+  # Bars to wait before re-entering a symbol after a losing exit.
+  # On hourly bars, 2 = 2 hours. Fast re-entry for more trade volume.
+  cooldown_bars_after_loss: 2
 
   min_reward_to_risk: 1.5
   breakeven_trigger_pct: 0.02
-  # Close a flat position after 12 trading days (~2.5 weeks). Faster
-  # turnover frees slots for new signals. Was 20.
-  time_stop_bars: 12
+  # Close a flat position after 24 hours of trading (~4 days).
+  time_stop_bars: 24
 
   drawdown_risk_reduction_threshold: 0.05
   drawdown_risk_reduction_factor: 0.5
@@ -98,14 +99,10 @@ strategy:
   name: ensemble
 
   ensemble:
-    # Was 2. Dropping to 1 lets a single member trigger an entry, with
-    # regime filters still gating. Event-driven members (MA cross, MACD,
-    # Bollinger, RSI) rarely fire on the same day, so min_agreement=2 is
-    # extremely conservative — it produced 3-4 trades/year on 500 stocks.
     min_agreement: 1
-    # Was 1.2. With min_agreement=1, a single member can reach min_score=0.8
-    # via its own weight (all members weighted >= 0.8).
-    min_score: 0.8
+    # Was 0.8. Lowered further to 0.5 — any member with weight >= 0.5
+    # triggers an entry on its own. All members now qualify.
+    min_score: 0.5
     members:
       - ma_crossover
       - rsi_reversion
@@ -117,19 +114,20 @@ strategy:
       rsi_reversion: 1.0
       bollinger: 0.8
 
-  # Regime filters tuned for daily stock data. Relaxed after the first
-  # backtest produced only 3 trades in a year – the old stack rejected
-  # virtually everything. These still filter bad regimes, just not all
-  # of them at once.
+  # Regime filters DRAMATICALLY LOOSENED to hit high trade count.
+  # Target: 300-600 trades/year. Win rate will likely drop vs the
+  # daily-bar config that achieved 61% on 13 trades.
   filter:
     enabled: true
-    trend_ema: 30            # was 50; 30-day is still a meaningful uptrend filter
-    require_uptrend: true
-    min_adx: 10              # was 12; lower bar lets more setups through
+    # Uptrend requirement DISABLED — on hourly bars, 30-period EMA is
+    # just 30 hours (~5 days), and most S&P 500 names are above it most
+    # of the time anyway. Filter was adding little.
+    trend_ema: 30
+    require_uptrend: false
+    min_adx: 0               # ADX disabled on hourly — too noisy to use
     adx_period: 14
-    min_atr_pct: 0.003       # keeps truly dead stocks out
+    min_atr_pct: 0.001       # loose – only excludes truly dead stocks
     atr_period: 14
-    # Weekly-trend confirmation DISABLED.
     htf_rule: null
     htf_ema: 20
     use_supertrend: false
@@ -143,14 +141,9 @@ strategy:
     fng_max: 80
     fng_days: 400
 
-    # Stock-only "news" gates – work in backtest because data is historical.
-    # Earnings blackout: skip entries within N days of next earnings.
-    # Earnings reports cause 5-15% gaps in either direction – random outcome
-    # for the bot. Sitting out is +EV. 0 disables.
-    earnings_blackout_days: 3
-    # News gap: reject entries when the previous bar gapped down by this %
-    # or more. Catches "stock cratered on bad news yesterday – don't catch
-    # the falling knife." 0 disables.
+    # Defensive news gates – cheap to keep on, they filter very few trades
+    # but dodge the biggest event-driven disasters.
+    earnings_blackout_days: 2    # was 3; less aggressive blackout on hourly
     news_gap_threshold: 0.05
 
   # Indicator periods shortened from crypto-hourly defaults to daily-stock
