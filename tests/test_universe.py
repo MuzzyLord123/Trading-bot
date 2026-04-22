@@ -11,6 +11,7 @@ from bot import universe
 @pytest.fixture(autouse=True)
 def _redirect_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(universe, "SP500_CACHE", tmp_path / "sp500.csv")
+    monkeypatch.setattr(universe, "NASDAQ100_CACHE", tmp_path / "nasdaq100.csv")
     yield
 
 
@@ -25,6 +26,11 @@ def test_load_sp500_uses_fresh_cache():
     assert result == ["AAPL", "MSFT", "BRK-B"]
 
 
+def test_load_nasdaq100_uses_fresh_cache():
+    _seed_cache(universe.NASDAQ100_CACHE, ["AAPL", "MSFT", "NVDA"])
+    assert universe.load_nasdaq100() == ["AAPL", "MSFT", "NVDA"]
+
+
 def test_expand_universe_tokens_leaves_regular_symbols_alone():
     _seed_cache(universe.SP500_CACHE, ["AAPL", "MSFT"])
     expanded = universe.expand_universe_tokens(["VWRL.L", "AMD"])
@@ -37,6 +43,20 @@ def test_expand_universe_tokens_expands_sp500():
     assert expanded == ["VWRL.L", "AAPL", "MSFT", "GOOGL"]
 
 
+def test_expand_universe_tokens_expands_nasdaq100():
+    _seed_cache(universe.NASDAQ100_CACHE, ["NVDA", "TSLA", "AVGO"])
+    expanded = universe.expand_universe_tokens(["VWRL.L", "NASDAQ100"])
+    assert expanded == ["VWRL.L", "NVDA", "TSLA", "AVGO"]
+
+
+def test_expand_universe_tokens_deduplicates_across_indices():
+    _seed_cache(universe.SP500_CACHE, ["AAPL", "MSFT", "GOOGL", "JPM"])
+    _seed_cache(universe.NASDAQ100_CACHE, ["AAPL", "MSFT", "NVDA", "TSLA"])
+    expanded = universe.expand_universe_tokens(["SP500", "NASDAQ100"])
+    # AAPL/MSFT appear in both indices – listed once each.
+    assert expanded == ["AAPL", "MSFT", "GOOGL", "JPM", "NVDA", "TSLA"]
+
+
 def test_expand_universe_tokens_deduplicates():
     _seed_cache(universe.SP500_CACHE, ["AAPL", "MSFT", "GOOGL"])
     expanded = universe.expand_universe_tokens(["AAPL", "SP500", "MSFT"])
@@ -46,5 +66,8 @@ def test_expand_universe_tokens_deduplicates():
 
 def test_expand_universe_tokens_case_insensitive():
     _seed_cache(universe.SP500_CACHE, ["AAPL"])
+    _seed_cache(universe.NASDAQ100_CACHE, ["NVDA"])
     assert universe.expand_universe_tokens(["sp500"]) == ["AAPL"]
     assert universe.expand_universe_tokens(["S&P500"]) == ["AAPL"]
+    assert universe.expand_universe_tokens(["nasdaq100"]) == ["NVDA"]
+    assert universe.expand_universe_tokens(["NDX"]) == ["NVDA"]

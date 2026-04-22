@@ -27,13 +27,15 @@ trading:
   starting_capital: 33000.0
 
   # Yahoo Finance tickers. Use ".L" suffix for LSE listings, plain for US.
-  # Special tokens auto-expand:
-  #   SP500     -> every S&P 500 constituent (fetched from Wikipedia, cached)
-  # Example: scan the whole index + a couple of UK ETFs.
+  # Special tokens auto-expand (deduplicated where they overlap):
+  #   SP500     -> ~500 S&P 500 constituents
+  #   NASDAQ100 -> ~100 largest Nasdaq non-financials (tech-heavy)
+  # The union of SP500 + NASDAQ100 = ~530 unique US large caps.
   symbols:
     - VWRL.L        # Vanguard FTSE All-World (global equity)
     - VUAG.L        # Vanguard S&P 500 (accumulating)
-    - SP500         # expand to ~500 US large caps
+    - SP500
+    - NASDAQ100
 
   # Daily bars are the standard for stock strategies. 1h is supported but
   # fewer data points per symbol per day = fewer signals.

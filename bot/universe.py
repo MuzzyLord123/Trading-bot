@@ -1,15 +1,16 @@
 """Stock-universe loaders.
 
 Provides helpers to materialise a list of tickers from a short keyword
-(``SP500``) so users can write::
+(``SP500``, ``NASDAQ100``) so users can write::
 
     symbols:
       - SP500
+      - NASDAQ100
 
 in config.yaml and have the engine trade the whole index.
 
-The S&P 500 list is fetched from Wikipedia and cached on disk. Wikipedia's
-table is the canonical free source and updates quickly after rebalances.
+Lists are fetched from Wikipedia and cached on disk. Wikipedia is the
+canonical free source and updates quickly after index rebalances.
 Cache TTL is a week; delete the file to force a refresh.
 """
 from __future__ import annotations
@@ -25,66 +26,130 @@ log = logging.getLogger("bot.universe")
 
 SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 SP500_CACHE = Path("cache/sp500.csv")
-SP500_TTL_SECONDS = 7 * 24 * 3600  # one week
+
+NASDAQ100_URL = "https://en.wikipedia.org/wiki/Nasdaq-100"
+NASDAQ100_CACHE = Path("cache/nasdaq100.csv")
+
+CACHE_TTL_SECONDS = 7 * 24 * 3600  # one week
+# kept for backwards compat with old import sites
+SP500_TTL_SECONDS = CACHE_TTL_SECONDS
 
 # Tokens that users can write in config.yaml -> trading.symbols.
-UNIVERSE_TOKENS = {"SP500", "S&P500", "S&P 500", "SANDP500"}
+_SP500_TOKENS = {"SP500", "S&P500", "S&P 500", "SANDP500"}
+_NASDAQ100_TOKENS = {"NASDAQ100", "NDX", "NASDAQ-100"}
+UNIVERSE_TOKENS = _SP500_TOKENS | _NASDAQ100_TOKENS
 
 
-def _fetch_sp500_from_wikipedia() -> list[str]:
+def _get_url(url: str) -> str:
     import urllib.request
 
-    req = urllib.request.Request(
-        SP500_URL, headers={"User-Agent": "trading-bot/1.0"}
-    )
+    req = urllib.request.Request(url, headers={"User-Agent": "trading-bot/1.0"})
     with urllib.request.urlopen(req, timeout=20) as resp:
-        html = resp.read().decode("utf-8")
+        return resp.read().decode("utf-8")
+
+
+def _extract_symbols(html: str, column_candidates: tuple[str, ...]) -> list[str]:
+    """Parse HTML table and return a normalised list of yfinance tickers."""
     tables = pd.read_html(StringIO(html))
-    # First table on that page is the constituent list.
-    df = tables[0]
-    if "Symbol" not in df.columns:
-        raise RuntimeError("Unexpected Wikipedia layout – 'Symbol' column missing")
-    # Wikipedia uses e.g. "BRK.B"; yfinance uses "BRK-B".
-    symbols = (
-        df["Symbol"].astype(str).str.strip().str.replace(".", "-", regex=False).tolist()
+    for df in tables:
+        for col in column_candidates:
+            if col in df.columns:
+                symbols = (
+                    df[col]
+                    .astype(str)
+                    .str.strip()
+                    .str.replace(".", "-", regex=False)
+                    .tolist()
+                )
+                return [s for s in symbols if s and s.lower() != "nan"]
+    raise RuntimeError(
+        f"None of {column_candidates} found in any table on the page"
     )
-    return [s for s in symbols if s]
+
+
+def _load_cached(cache_path: Path) -> list[str] | None:
+    if not cache_path.exists():
+        return None
+    if time.time() - cache_path.stat().st_mtime >= CACHE_TTL_SECONDS:
+        return None
+    try:
+        return pd.read_csv(cache_path)["symbol"].astype(str).tolist()
+    except Exception as exc:
+        log.warning("cache unreadable at %s: %s", cache_path, exc)
+        return None
+
+
+def _write_cache(cache_path: Path, symbols: list[str]) -> None:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"symbol": symbols}).to_csv(cache_path, index=False)
 
 
 def load_sp500(force_refresh: bool = False) -> list[str]:
     """Return the current S&P 500 constituent tickers, yfinance-formatted."""
-    SP500_CACHE.parent.mkdir(parents=True, exist_ok=True)
-    if not force_refresh and SP500_CACHE.exists():
-        age = time.time() - SP500_CACHE.stat().st_mtime
-        if age < SP500_TTL_SECONDS:
-            try:
-                return pd.read_csv(SP500_CACHE)["symbol"].astype(str).tolist()
-            except Exception as exc:
-                log.warning("S&P 500 cache unreadable, refetching: %s", exc)
+    if not force_refresh:
+        cached = _load_cached(SP500_CACHE)
+        if cached is not None:
+            return cached
     try:
-        symbols = _fetch_sp500_from_wikipedia()
+        html = _get_url(SP500_URL)
+        symbols = _extract_symbols(html, ("Symbol",))
     except Exception as exc:
         log.warning("S&P 500 fetch failed (%s); using cached copy if any", exc)
         if SP500_CACHE.exists():
             return pd.read_csv(SP500_CACHE)["symbol"].astype(str).tolist()
         raise
-    pd.DataFrame({"symbol": symbols}).to_csv(SP500_CACHE, index=False)
+    _write_cache(SP500_CACHE, symbols)
     log.info("Fetched %d S&P 500 tickers", len(symbols))
     return symbols
 
 
+def load_nasdaq100(force_refresh: bool = False) -> list[str]:
+    """Return the current Nasdaq-100 constituent tickers, yfinance-formatted."""
+    if not force_refresh:
+        cached = _load_cached(NASDAQ100_CACHE)
+        if cached is not None:
+            return cached
+    try:
+        html = _get_url(NASDAQ100_URL)
+        # Wikipedia's Nasdaq-100 page uses "Ticker" (primary) but falls
+        # back to "Symbol" historically.
+        symbols = _extract_symbols(html, ("Ticker", "Symbol"))
+    except Exception as exc:
+        log.warning("Nasdaq-100 fetch failed (%s); using cached copy if any", exc)
+        if NASDAQ100_CACHE.exists():
+            return pd.read_csv(NASDAQ100_CACHE)["symbol"].astype(str).tolist()
+        raise
+    _write_cache(NASDAQ100_CACHE, symbols)
+    log.info("Fetched %d Nasdaq-100 tickers", len(symbols))
+    return symbols
+
+
+def _expand_single_token(up: str) -> list[str] | None:
+    if up in _SP500_TOKENS:
+        return load_sp500()
+    if up in _NASDAQ100_TOKENS:
+        return load_nasdaq100()
+    return None
+
+
 def expand_universe_tokens(symbols: list[str]) -> list[str]:
-    """Replace universe keywords in a symbol list with real tickers."""
+    """Replace universe keywords in a symbol list with real tickers.
+
+    Deduplicates across multiple index tokens so, for example,
+    ``[SP500, NASDAQ100]`` yields the union with AAPL/MSFT/etc. listed once.
+    """
     out: list[str] = []
     seen: set[str] = set()
     for sym in symbols:
         up = str(sym).upper().strip()
+        expanded = None
         if up in UNIVERSE_TOKENS:
             try:
-                expanded = load_sp500()
+                expanded = _expand_single_token(up)
             except Exception as exc:
                 log.error("Could not expand %s: %s", sym, exc)
                 continue
+        if expanded is not None:
             for t in expanded:
                 if t not in seen:
                     seen.add(t)
@@ -94,3 +159,4 @@ def expand_universe_tokens(symbols: list[str]) -> list[str]:
                 seen.add(sym)
                 out.append(sym)
     return out
+
