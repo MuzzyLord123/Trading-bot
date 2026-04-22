@@ -149,3 +149,27 @@ logging:
 
 notifications:
   telegram: false
+
+# ---------------------------------------------------------------------------
+# News feed (LIVE MODE ONLY — backtest ignores this)
+# ---------------------------------------------------------------------------
+# Reads RSS from CoinDesk, Cointelegraph, Decrypt. Classifies headlines by
+# keyword. When a major news item matches a traded symbol, the engine acts.
+#
+# Modes:
+#   defensive  – only CLOSE positions on bad news. Safe, no new entries from news.
+#   aggressive – ALSO open positions on good news (risky — news is already priced
+#                in by the time free feeds publish; you are buying after the pop).
+#
+# Disabled by default. Turn on after you've paper-traded and trust the bot.
+news:
+  enabled: false
+  mode: defensive
+  # Classification score threshold for "major" news. Lower = more triggers.
+  # Single strong keyword (hack, approval) scores ~6; threshold 5 means
+  # those fire reliably while minor mentions are ignored.
+  major_threshold: 5.0
+  # Ignore stories older than this many minutes (stale news).
+  max_age_minutes: 120
+  # After a bad-news close, block new entries on that symbol for N seconds.
+  blackout_seconds: 14400   # 4 hours

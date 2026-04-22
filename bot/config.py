@@ -74,6 +74,21 @@ class NotificationsConfig:
 
 
 @dataclass
+class NewsConfig:
+    """Live-mode only: act on major news headlines."""
+    enabled: bool = False
+    # "defensive": only close positions on bad news.
+    # "aggressive": also open positions on good news (see docs).
+    mode: str = "defensive"
+    major_threshold: float = 5.0
+    max_age_minutes: int = 120
+    # Block new entries for this many seconds after a bad-news close.
+    blackout_seconds: int = 14400  # 4 hours
+    # Only act on news that fires at least this many polls before open.
+    min_confirmations: int = 1
+
+
+@dataclass
 class Config:
     exchange: ExchangeConfig
     trading: TradingConfig
@@ -81,6 +96,7 @@ class Config:
     strategy: StrategyConfig
     logging: LoggingConfig
     notifications: NotificationsConfig
+    news: NewsConfig = field(default_factory=NewsConfig)
     secrets: dict[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -99,6 +115,7 @@ class Config:
             strategy=StrategyConfig(**raw.get("strategy", {})),
             logging=LoggingConfig(**raw.get("logging", {})),
             notifications=NotificationsConfig(**raw.get("notifications", {})),
+            news=NewsConfig(**raw.get("news", {})),
             secrets={
                 "api_key": os.getenv("EXCHANGE_API_KEY", ""),
                 "api_secret": os.getenv("EXCHANGE_API_SECRET", ""),
