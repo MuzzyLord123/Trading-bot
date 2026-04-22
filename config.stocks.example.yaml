@@ -93,11 +93,14 @@ strategy:
   name: ensemble
 
   ensemble:
-    min_agreement: 2
-    # Lowered from 1.5: previous run produced 3 trades/year across 500 stocks
-    # because filter stack was too strict. 1.2 lets more genuine setups
-    # through while still requiring conviction.
-    min_score: 1.2
+    # Was 2. Dropping to 1 lets a single member trigger an entry, with
+    # regime filters still gating. Event-driven members (MA cross, MACD,
+    # Bollinger, RSI) rarely fire on the same day, so min_agreement=2 is
+    # extremely conservative — it produced 3-4 trades/year on 500 stocks.
+    min_agreement: 1
+    # Was 1.2. With min_agreement=1, a single member can reach min_score=0.8
+    # via its own weight (all members weighted >= 0.8).
+    min_score: 0.8
     members:
       - ma_crossover
       - rsi_reversion
@@ -115,15 +118,13 @@ strategy:
   # of them at once.
   filter:
     enabled: true
-    trend_ema: 50            # "above 50-day EMA" = in uptrend
+    trend_ema: 30            # was 50; 30-day is still a meaningful uptrend filter
     require_uptrend: true
-    min_adx: 12              # was 18; 18 rejected most consolidation setups
+    min_adx: 10              # was 12; lower bar lets more setups through
     adx_period: 14
-    min_atr_pct: 0.003       # was 0.005; excludes only truly dead stocks
+    min_atr_pct: 0.003       # keeps truly dead stocks out
     atr_period: 14
-    # Weekly-trend confirmation DISABLED (was '1W').
-    # On daily bars this filter rejected 70%+ of candidate entries.
-    # Re-enable once you're consistently trading 60+ times/year.
+    # Weekly-trend confirmation DISABLED.
     htf_rule: null
     htf_ema: 20
     use_supertrend: false
