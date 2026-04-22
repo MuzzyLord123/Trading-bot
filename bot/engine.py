@@ -331,11 +331,14 @@ def _now_iso() -> str:
 
 def build_engine(cfg: Config) -> TradingEngine:
     exchange = build_exchange(cfg)
+    filter_cfg = dict(cfg.strategy.filter or {})
+    if int(filter_cfg.get("earnings_blackout_days", 0)) > 0:
+        filter_cfg["earnings_symbols"] = list(cfg.trading.symbols)
     strategy = build_strategy_from_config(
         cfg.strategy.name,
         cfg.strategy.params,
         cfg.strategy.ensemble,
-        cfg.strategy.filter,
+        filter_cfg,
     )
     risk = RiskManager(cfg.risk)
     return TradingEngine(cfg, exchange, strategy, risk)

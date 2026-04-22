@@ -48,6 +48,16 @@ def _maybe_filter(
         kwargs.pop("fng_min", None)
         kwargs.pop("fng_max", None)
 
+    earnings_blackout = int(kwargs.pop("earnings_blackout_days", 0))
+    earnings_symbols = kwargs.pop("earnings_symbols", None)
+    if earnings_blackout > 0 and earnings_symbols:
+        from ..news_stocks import load_earnings_calendar
+        kwargs["earnings_calendar"] = load_earnings_calendar(list(earnings_symbols))
+        kwargs["earnings_blackout_days"] = earnings_blackout
+    else:
+        kwargs.pop("earnings_calendar", None)
+        kwargs["earnings_blackout_days"] = earnings_blackout
+
     return FilteredStrategy(inner=strategy, **kwargs)
 
 

@@ -130,6 +130,16 @@ strategy:
     fng_max: 80
     fng_days: 400
 
+    # Stock-only "news" gates – work in backtest because data is historical.
+    # Earnings blackout: skip entries within N days of next earnings.
+    # Earnings reports cause 5-15% gaps in either direction – random outcome
+    # for the bot. Sitting out is +EV. 0 disables.
+    earnings_blackout_days: 3
+    # News gap: reject entries when the previous bar gapped down by this %
+    # or more. Catches "stock cratered on bad news yesterday – don't catch
+    # the falling knife." 0 disables.
+    news_gap_threshold: 0.05
+
   params:
     ma_crossover:
       fast: 10

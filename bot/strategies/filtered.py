@@ -4,6 +4,7 @@ from __future__ import annotations
 import pandas as pd
 
 from ..indicators import adx, atr, ema, supertrend
+from ..news_stocks import days_until_earnings, is_bearish_gap
 from ..sentiment import value_at as fng_value_at
 from .base import Signal, Strategy, StrategyContext
 
@@ -37,6 +38,10 @@ class FilteredStrategy(Strategy):
       5. Supertrend direction: +1 (uptrend).
       6. Volume surge: last bar volume >= ``volume_mult`` * rolling mean.
       7. Fear & Greed: index in [``fng_min``, ``fng_max``] at bar time.
+      8. Earnings blackout: skip if next earnings is within
+         ``earnings_blackout_days``. Stock-only.
+      9. Bearish news gap: skip if the prior bar gapped down
+         ``news_gap_threshold`` or more (likely bad news). Stock-only.
     """
 
     name = "filtered"
@@ -60,6 +65,9 @@ class FilteredStrategy(Strategy):
         fng_df: pd.DataFrame | None = None,
         fng_min: int = 0,
         fng_max: int = 100,
+        earnings_calendar: dict[str, pd.DataFrame] | None = None,
+        earnings_blackout_days: int = 0,
+        news_gap_threshold: float = 0.0,
     ) -> None:
         self.inner = inner
         self.trend_ema = trend_ema
@@ -78,6 +86,9 @@ class FilteredStrategy(Strategy):
         self.fng_df = fng_df
         self.fng_min = fng_min
         self.fng_max = fng_max
+        self.earnings_calendar = earnings_calendar or {}
+        self.earnings_blackout_days = earnings_blackout_days
+        self.news_gap_threshold = news_gap_threshold
 
     def min_history(self) -> int:
         base = self.inner.min_history()
@@ -139,6 +150,18 @@ class FilteredStrategy(Strategy):
             # If unavailable for this timestamp (e.g. backtest older than
             # the F&G history), skip the gate rather than reject.
             if fng is not None and not (self.fng_min <= fng <= self.fng_max):
+                return Signal.FLAT
+
+        if self.earnings_blackout_days > 0:
+            symbol_calendar = self.earnings_calendar.get(ctx.symbol)
+            days = days_until_earnings(symbol_calendar, df["timestamp"].iloc[-1])
+            if days is not None and days <= self.earnings_blackout_days:
+                return Signal.FLAT
+
+        if self.news_gap_threshold > 0 and len(df) >= 2:
+            recent = df.tail(2)
+            bearish = is_bearish_gap(recent, threshold_pct=self.news_gap_threshold)
+            if bool(bearish.iloc[-1]):
                 return Signal.FLAT
 
         return Signal.LONG
