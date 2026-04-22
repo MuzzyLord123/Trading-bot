@@ -8,5 +8,6 @@ click>=8.1.7
 tenacity>=8.2.3
 requests>=2.31.0
 yfinance>=0.2.40
+lxml>=5.0.0
 streamlit>=1.30.0
 pytest>=8.0.0
