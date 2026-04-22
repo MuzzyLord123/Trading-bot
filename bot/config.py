@@ -108,9 +108,13 @@ class Config:
                 f"Config file '{p}' not found. Copy config.example.yaml to config.yaml."
             )
         raw = yaml.safe_load(p.read_text()) or {}
+        trading_cfg = TradingConfig(**raw.get("trading", {}))
+        # Expand universe tokens ('SP500' etc.) in trading.symbols.
+        from .universe import expand_universe_tokens
+        trading_cfg.symbols = expand_universe_tokens(trading_cfg.symbols)
         return cls(
             exchange=ExchangeConfig(**raw.get("exchange", {})),
-            trading=TradingConfig(**raw.get("trading", {})),
+            trading=trading_cfg,
             risk=RiskConfig(**raw.get("risk", {})),
             strategy=StrategyConfig(**raw.get("strategy", {})),
             logging=LoggingConfig(**raw.get("logging", {})),

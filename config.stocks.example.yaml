@@ -27,17 +27,13 @@ trading:
   starting_capital: 33000.0
 
   # Yahoo Finance tickers. Use ".L" suffix for LSE listings, plain for US.
-  # A mix of global ETFs + large-cap US names is a sensible default; tune to
-  # what you actually trade. The bot is long-only so trending names work best.
+  # Special tokens auto-expand:
+  #   SP500     -> every S&P 500 constituent (fetched from Wikipedia, cached)
+  # Example: scan the whole index + a couple of UK ETFs.
   symbols:
     - VWRL.L        # Vanguard FTSE All-World (global equity)
     - VUAG.L        # Vanguard S&P 500 (accumulating)
-    - AAPL
-    - MSFT
-    - GOOGL
-    - NVDA
-    - META
-    - AMZN
+    - SP500         # expand to ~500 US large caps
 
   # Daily bars are the standard for stock strategies. 1h is supported but
   # fewer data points per symbol per day = fewer signals.

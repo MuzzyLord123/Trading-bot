@@ -90,12 +90,27 @@ class Backtester:
         since = until - timedelta(days=days)
         since_ms = int(since.timestamp() * 1000)
         until_ms = int(until.timestamp() * 1000)
+        symbols = self.cfg.trading.symbols
+        tf = self.cfg.trading.timeframe
         out: dict[str, pd.DataFrame] = {}
-        for symbol in self.cfg.trading.symbols:
+        # For large universes, prefer a single batched download.
+        if hasattr(self.exchange, "fetch_ohlcv_batch") and len(symbols) > 10:
+            log.info("Batch-fetching %d symbols for %d days", len(symbols), days)
+            try:
+                limit = max(days + 5, 50)
+                out = self.exchange.fetch_ohlcv_batch(symbols, tf, limit=limit)
+            except Exception as exc:
+                log.warning("batch fetch failed, falling back per-symbol: %s", exc)
+                out = {}
+        for symbol in symbols:
+            if symbol in out and not out[symbol].empty:
+                continue
             log.info("Fetching %s history for %d days", symbol, days)
-            df = self.exchange.fetch_ohlcv_range(
-                symbol, self.cfg.trading.timeframe, since_ms, until_ms
-            )
+            try:
+                df = self.exchange.fetch_ohlcv_range(symbol, tf, since_ms, until_ms)
+            except Exception as exc:
+                log.warning("Fetch failed for %s: %s", symbol, exc)
+                continue
             if df.empty:
                 log.warning("No data for %s, skipping", symbol)
                 continue

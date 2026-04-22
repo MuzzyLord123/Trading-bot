@@ -27,10 +27,63 @@ ROOT = Path(__file__).parent
 CONFIG_PATH = ROOT / "config.yaml"
 CONFIG_EXAMPLE_PATH = ROOT / "config.example.yaml"
 STOCKS_EXAMPLE_PATH = ROOT / "config.stocks.example.yaml"
+ENV_PATH = ROOT / ".env"
 TRADES_PATH = ROOT / "logs" / "trades.csv"
 EQUITY_PATH = ROOT / "logs" / "equity.csv"
 BACKTEST_EQUITY = ROOT / "reports" / "backtest_equity.csv"
 BACKTEST_TRADES = ROOT / "reports" / "backtest_trades.csv"
+
+API_KEY_FIELDS = [
+    ("TRADING212_API_KEY", "Trading 212 API key"),
+    ("EXCHANGE_API_KEY", "Crypto exchange API key"),
+    ("EXCHANGE_API_SECRET", "Crypto exchange API secret"),
+    ("EXCHANGE_API_PASSWORD", "Crypto exchange API password"),
+    ("TELEGRAM_BOT_TOKEN", "Telegram bot token"),
+    ("TELEGRAM_CHAT_ID", "Telegram chat ID"),
+]
+
+
+def read_env() -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not ENV_PATH.exists():
+        return values
+    for line in ENV_PATH.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        values[key.strip()] = val.strip().strip('"').strip("'")
+    return values
+
+
+def write_env(updates: dict[str, str]) -> None:
+    """Merge ``updates`` into ``.env`` preserving comments and order."""
+    existing: list[str] = []
+    if ENV_PATH.exists():
+        existing = ENV_PATH.read_text().splitlines()
+    seen_keys: set[str] = set()
+    out: list[str] = []
+    for line in existing:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            if key in updates:
+                out.append(f"{key}={updates[key]}")
+                seen_keys.add(key)
+                continue
+        out.append(line)
+    for key, val in updates.items():
+        if key not in seen_keys:
+            out.append(f"{key}={val}")
+    ENV_PATH.write_text("\n".join(out) + "\n")
+
+
+def mask(value: str) -> str:
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return "•" * len(value)
+    return value[:4] + "•" * (len(value) - 8) + value[-4:]
 
 st.set_page_config(page_title="Trading Bot Dashboard", layout="wide")
 
@@ -121,7 +174,7 @@ mode = cfg.get("trading", {}).get("mode", "paper").upper()
 exchange_name = cfg.get("exchange", {}).get("name", "—")
 st.caption(f"{mode} mode · {exchange_name}")
 
-tabs = st.tabs(["Overview", "Trades", "Config", "News", "Backtest"])
+tabs = st.tabs(["Overview", "Trades", "Config", "News", "Backtest", "Settings"])
 
 
 # -------------------------- Overview tab ---------------------------------
@@ -363,6 +416,63 @@ with tabs[3]:
         else:
             st.dataframe(news_only.sort_values("timestamp", ascending=False),
                          use_container_width=True, hide_index=True)
+
+
+# -------------------------- Settings tab -------------------------------
+with tabs[5]:
+    st.subheader("API keys")
+    st.caption(
+        "Stored in .env (gitignored). Required for live trading only. "
+        "Leave blank to keep an existing value."
+    )
+    current_env = read_env()
+    with st.form("env_form"):
+        new_values: dict[str, str] = {}
+        for key, label in API_KEY_FIELDS:
+            current = current_env.get(key, "")
+            placeholder = mask(current) if current else "not set"
+            entry = st.text_input(
+                label,
+                key=f"env_{key}",
+                type="password",
+                placeholder=placeholder,
+                help=f"Environment variable: {key}",
+            )
+            if entry:
+                new_values[key] = entry
+        submitted = st.form_submit_button("Save API keys")
+        if submitted:
+            if not new_values:
+                st.info("No new values provided — nothing changed.")
+            else:
+                try:
+                    write_env(new_values)
+                    st.success(
+                        f"Saved {len(new_values)} key(s) to .env. Restart the bot "
+                        "for changes to take effect."
+                    )
+                except Exception as exc:
+                    st.error(f"Could not write .env: {exc}")
+
+    st.divider()
+    st.subheader("Universe expansion")
+    st.caption(
+        "In config.yaml under `trading.symbols`, you can use these tokens "
+        "to auto-expand to a whole index:"
+    )
+    st.code("- SP500     # all ~500 S&P 500 stocks", language="yaml")
+    sp_cache = ROOT / "cache" / "sp500.csv"
+    if sp_cache.exists():
+        try:
+            sp_df = pd.read_csv(sp_cache)
+            st.metric("S&P 500 cached", f"{len(sp_df)} tickers",
+                      delta=f"refreshed {datetime.fromtimestamp(sp_cache.stat().st_mtime).strftime('%Y-%m-%d %H:%M')}")
+            with st.expander("Show cached tickers"):
+                st.dataframe(sp_df, use_container_width=True, hide_index=True)
+        except Exception as exc:
+            st.error(f"Could not read S&P 500 cache: {exc}")
+    else:
+        st.caption("S&P 500 cache empty. It will populate on next bot start / backtest.")
 
 
 # -------------------------- Backtest tab --------------------------------

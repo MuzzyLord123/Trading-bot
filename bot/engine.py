@@ -91,13 +91,20 @@ class TradingEngine:
             return
         prices: dict[str, float] = {}
         candles: dict[str, object] = {}
-        for symbol in self.cfg.trading.symbols:
-            df = self.exchange.fetch_ohlcv(
-                symbol,
-                timeframe=self.cfg.trading.timeframe,
-                limit=self.cfg.trading.history_candles,
-            )
-            if df.empty:
+        symbols = self.cfg.trading.symbols
+        tf = self.cfg.trading.timeframe
+        limit = self.cfg.trading.history_candles
+        batch_data: dict[str, object] = {}
+        if hasattr(self.exchange, "fetch_ohlcv_batch") and len(symbols) > 10:
+            try:
+                batch_data = self.exchange.fetch_ohlcv_batch(symbols, tf, limit=limit)
+            except Exception as exc:
+                log.warning("batch fetch failed, falling back to per-symbol: %s", exc)
+        for symbol in symbols:
+            df = batch_data.get(symbol)
+            if df is None:
+                df = self.exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
+            if df is None or getattr(df, "empty", True):
                 continue
             candles[symbol] = df
             prices[symbol] = float(df["close"].iloc[-1])

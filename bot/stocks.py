@@ -124,6 +124,63 @@ class YFinanceSource:
         df = df[["timestamp", "open", "high", "low", "close", "volume"]]
         return df.tail(limit).reset_index(drop=True)
 
+    def fetch_ohlcv_batch(
+        self,
+        symbols: list[str],
+        timeframe: str,
+        limit: int = 500,
+    ) -> dict[str, pd.DataFrame]:
+        """Batch download OHLCV for many tickers at once.
+
+        Much faster than calling :meth:`fetch_ohlcv` per symbol when scanning
+        a large universe (e.g. the S&P 500). yfinance parallelises the
+        download internally.
+        """
+        if not symbols:
+            return {}
+        yf = self._yf()
+        interval = self._interval(timeframe)
+        period = self._period_for(timeframe, limit)
+        raw = yf.download(
+            tickers=" ".join(symbols),
+            period=period,
+            interval=interval,
+            auto_adjust=True,
+            group_by="ticker",
+            threads=True,
+            progress=False,
+        )
+        result: dict[str, pd.DataFrame] = {}
+        for sym in symbols:
+            try:
+                sub = raw[sym] if len(symbols) > 1 and sym in raw.columns.get_level_values(0) else raw
+            except (KeyError, AttributeError):
+                continue
+            if sub is None or sub.empty:
+                continue
+            df = sub.reset_index().rename(
+                columns={
+                    "Date": "timestamp",
+                    "Datetime": "timestamp",
+                    "Open": "open",
+                    "High": "high",
+                    "Low": "low",
+                    "Close": "close",
+                    "Volume": "volume",
+                }
+            )
+            if "timestamp" not in df.columns:
+                continue
+            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+            cols = ["timestamp", "open", "high", "low", "close", "volume"]
+            if not all(c in df.columns for c in cols):
+                continue
+            df = df[cols].dropna()
+            if df.empty:
+                continue
+            result[sym] = df.tail(limit).reset_index(drop=True)
+        return result
+
     def fetch_ohlcv_range(
         self, symbol: str, timeframe: str, since_ms: int, until_ms: int
     ) -> pd.DataFrame:
@@ -298,6 +355,9 @@ class StocksExchange:
 
     def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 500, since: int | None = None) -> pd.DataFrame:
         return self.data.fetch_ohlcv(symbol, timeframe, limit=limit, since=since)
+
+    def fetch_ohlcv_batch(self, symbols: list[str], timeframe: str, limit: int = 500) -> dict[str, pd.DataFrame]:
+        return self.data.fetch_ohlcv_batch(symbols, timeframe, limit=limit)
 
     def fetch_ohlcv_range(self, symbol: str, timeframe: str, since_ms: int, until_ms: int) -> pd.DataFrame:
         return self.data.fetch_ohlcv_range(symbol, timeframe, since_ms, until_ms)
