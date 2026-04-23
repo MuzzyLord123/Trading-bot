@@ -25,6 +25,21 @@ def test_rsi_bounds():
     assert ((r >= 0) & (r <= 100)).all()
 
 
+def test_rsi_pure_uptrend_returns_100():
+    # Monotonically increasing series has no losses; conventional RSI = 100.
+    s = _series(np.linspace(100, 200, 100))
+    r = rsi(s, 14).dropna()
+    assert not r.empty
+    assert r.iloc[-1] == 100.0
+
+
+def test_rsi_pure_downtrend_returns_0():
+    s = _series(np.linspace(200, 100, 100))
+    r = rsi(s, 14).dropna()
+    assert not r.empty
+    assert r.iloc[-1] == 0.0
+
+
 def test_macd_columns_and_signal_properties():
     s = _series(np.linspace(100, 120, 80))
     m = macd(s, 12, 26, 9)

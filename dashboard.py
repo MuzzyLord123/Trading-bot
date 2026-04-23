@@ -8,12 +8,12 @@ separately (``python main.py`` for live/paper). This dashboard is a
 read/write UI over the config file and the CSV logs the bot writes.
 
 Pages (sidebar):
-  * Overview  – current equity, today's P&L, open positions, equity curve.
-  * Trades    – full trade history with per-symbol breakdown.
-  * Config    – edit config + "Save & Run Backtest" button.
-  * News      – news-triggered trades.
-  * Backtest  – latest backtest results.
-  * Settings  – API keys, stored in .env.
+  * Overview  - current equity, today's P&L, open positions, equity curve.
+  * Trades    - full trade history with per-symbol breakdown.
+  * Config    - edit config + "Save & Run Backtest" button.
+  * News      - live company-news headlines from Yahoo Finance.
+  * Backtest  - latest backtest results.
+  * Settings  - API keys, stored in .env.
 """
 from __future__ import annotations
 
@@ -51,7 +51,6 @@ API_KEY_FIELDS = [
 # ---------------------------------------------------------------------------
 st.set_page_config(
     page_title="Trading Bot",
-    page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -228,17 +227,17 @@ mode = cfg.get("trading", {}).get("mode", "paper").upper()
 exchange_name = "Trading 212"
 
 with st.sidebar:
-    st.markdown("### 📈 Trading Bot")
+    st.markdown("### Trading Bot")
     equity_df = load_equity()
     if not equity_df.empty:
         last_seen = equity_df["timestamp"].iloc[-1]
         age = datetime.now(timezone.utc) - last_seen.to_pydatetime()
         if age < timedelta(minutes=5):
-            st.success(f"✓ Bot active\n\nLast tick: {int(age.total_seconds())}s ago")
+            st.success(f"Bot active\n\nLast tick: {int(age.total_seconds())}s ago")
         elif age < timedelta(hours=1):
-            st.warning(f"⚠ Stale\n\nLast tick: {int(age.total_seconds() / 60)} min ago")
+            st.warning(f"Stale\n\nLast tick: {int(age.total_seconds() / 60)} min ago")
         else:
-            st.error(f"✗ Bot offline\n\nLast tick: {age.days}d {age.seconds // 3600}h ago")
+            st.error(f"Bot offline\n\nLast tick: {age.days}d {age.seconds // 3600}h ago")
     else:
         st.info("No equity log — bot hasn't run yet.")
 
@@ -249,7 +248,7 @@ with st.sidebar:
     st.caption(f"**Universe:** {len(symbols)} symbols")
 
     st.markdown("---")
-    if st.button("🔄 Refresh data", use_container_width=True):
+    if st.button("Refresh data", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
@@ -569,10 +568,10 @@ with tabs[2]:
 
             col_save, col_run = st.columns(2)
             save_only = col_save.form_submit_button(
-                "💾 Save only", use_container_width=True,
+                "Save only", use_container_width=True,
             )
             save_and_run = col_run.form_submit_button(
-                "🚀 Save & Run Backtest", use_container_width=True, type="primary",
+                "Save & Run Backtest", use_container_width=True, type="primary",
             )
 
         if save_only or save_and_run:
@@ -588,9 +587,9 @@ with tabs[2]:
                 st.write("Spawning `python backtest.py` as subprocess…")
                 success, tail = _run_backtest_subprocess(days=backtest_days)
                 if success:
-                    status.update(label="Backtest complete ✓", state="complete")
+                    status.update(label="Backtest complete", state="complete")
                 else:
-                    status.update(label="Backtest failed ✗", state="error")
+                    status.update(label="Backtest failed", state="error")
                 st.code(tail, language="text")
 
             st.cache_data.clear()
@@ -680,7 +679,7 @@ with tabs[3]:
             pick = st.selectbox("Ticker", expanded_symbols)
             target_symbols = [pick]
 
-        refresh = st.button("🔄 Refresh now (bypass cache)")
+        refresh = st.button("Refresh now (bypass cache)")
 
         if target_symbols:
             with st.spinner(f"Fetching news for {len(target_symbols)} ticker(s)…"):
@@ -721,13 +720,13 @@ with tabs[4]:
     with col1:
         quick_days = st.number_input("Days", min_value=30, max_value=730,
                                      value=365, step=30, key="quick_days")
-        if st.button("▶ Run backtest", use_container_width=True, type="primary"):
+        if st.button("Run backtest", use_container_width=True, type="primary"):
             with st.status(f"Running {quick_days}-day backtest…", expanded=True) as status:
                 ok, tail = _run_backtest_subprocess(days=int(quick_days))
                 if ok:
-                    status.update(label="Backtest complete ✓", state="complete")
+                    status.update(label="Backtest complete", state="complete")
                 else:
-                    status.update(label="Backtest failed ✗", state="error")
+                    status.update(label="Backtest failed", state="error")
                 st.code(tail[-2000:], language="text")
             st.cache_data.clear()
             st.rerun()
@@ -807,7 +806,7 @@ with tabs[5]:
     st.markdown("---")
     st.subheader("Universe")
     st.caption(
-        "In config.yaml → `trading.symbols`, these tokens auto-expand:"
+        "In config.yaml -> `trading.symbols`, these tokens auto-expand:"
     )
     st.code(
         "- SP500       # ~500 S&P 500 constituents\n"

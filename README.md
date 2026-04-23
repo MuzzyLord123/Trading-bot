@@ -210,7 +210,7 @@ registering the name in `bot/strategies/__init__.py`.
    returns aren't concentrated in one window – that signals overfit.
 3. Paper trade for at least a week. Verify the bot's behaviour matches
    expectations on live prices.
-4. In the Trading 212 app: **Settings → API → Generate new key**. Approval
+4. In the Trading 212 app: **Settings -> API -> Generate new key**. Approval
    takes a few days. A demo key is available for `demo.trading212.com` if
    you want to rehearse live mode without real money first.
 5. Put `TRADING212_API_KEY` in `.env`, set `trading.mode: live` and start

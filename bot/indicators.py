@@ -19,8 +19,16 @@ def rsi(series: pd.Series, period: int = 14) -> pd.Series:
     loss = -delta.clip(upper=0.0)
     avg_gain = gain.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
     avg_loss = loss.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    # Textbook RSI handles the one-sided edge cases as:
+    #   avg_loss == 0 -> RSI = 100 (pure uptrend, never oversold)
+    #   avg_gain == 0 -> RSI = 0   (pure downtrend, never overbought)
+    # Returning NaN in those cases (as a naive divide would) would make the
+    # indicator useless on strongly trending instruments.
     rs = avg_gain / avg_loss.replace(0.0, np.nan)
-    return 100 - (100 / (1 + rs))
+    out = 100 - (100 / (1 + rs))
+    out = out.where(~((avg_loss == 0) & (avg_gain > 0)), 100.0)
+    out = out.where(~((avg_gain == 0) & (avg_loss > 0)), 0.0)
+    return out
 
 
 def macd(

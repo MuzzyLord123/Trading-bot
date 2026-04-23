@@ -76,7 +76,7 @@ class YFinanceSource:
             ) from exc
 
     def _period_for(self, timeframe: str, limit: int) -> str:
-        # Yahoo caps intraday history: 60m → 730d, 5m → 60d, 1m → 7d.
+        # Yahoo caps intraday history: 60m -> 730d, 5m -> 60d, 1m -> 7d.
         # Pick the smallest period that likely fits ``limit`` bars.
         days_per_bar = {
             "1m": 1 / 390, "5m": 5 / 390, "15m": 15 / 390, "30m": 30 / 390,
@@ -231,7 +231,7 @@ class Trading212Broker:
     Docs: https://t212public-api-docs.redoc.ly/
 
     The API key is per-environment (live vs demo) – request one from the
-    Trading 212 app under Settings → API. It takes a few days for T212 to
+    Trading 212 app under Settings -> API. It takes a few days for T212 to
     approve API access.
     """
 

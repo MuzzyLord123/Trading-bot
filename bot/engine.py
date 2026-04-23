@@ -275,7 +275,7 @@ class TradingEngine:
             }
         )
         log.info(
-            "SCALE-OUT %s %.6f @ %.4f pnl=%.2f (remaining %.6f, stop→%.4f)",
+            "SCALE-OUT %s %.6f @ %.4f pnl=%.2f (remaining %.6f, stop->%.4f)",
             pos.symbol, partial, fill_price, pnl, pos.amount, pos.stop_loss,
         )
 
