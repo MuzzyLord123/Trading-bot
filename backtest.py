@@ -19,11 +19,27 @@ from bot.logger import console, setup_logging
 @click.option("--no-csv", is_flag=True, default=False,
               help="Skip writing reports/ CSVs.")
 @click.option("--windows", type=int, default=4, show_default=True,
-              help="Number of equal-sized windows for stability stats (0 to skip).")
-def main(config_path: str, days: int, no_csv: bool, windows: int) -> None:
+              help="Number of equal-sized windows for equity-curve stability stats (0 to skip).")
+@click.option("--walk-forward", type=int, default=0, show_default=True,
+              help="If > 1, run a walk-forward backtest with fresh portfolio per window.")
+def main(config_path: str, days: int, no_csv: bool, windows: int, walk_forward: int) -> None:
     cfg = Config.load(config_path)
     setup_logging(cfg.logging.level)
     bt = build_backtester(cfg)
+
+    if walk_forward > 1:
+        data = bt.load_data(days)
+        wf = bt.walk_forward(days=days, n_windows=walk_forward, data=data)
+        wtable = Table(title=f"Walk-forward: {walk_forward} windows over {days}d")
+        cols = ("window", "start", "end", "total_return_pct", "sharpe", "max_drawdown_pct", "trades")
+        for col in cols:
+            wtable.add_column(col)
+        for row in wf["windows"]:
+            wtable.add_row(*[str(row.get(c, "")) for c in cols])
+        console().print(wtable)
+        console().print(json.dumps(wf["summary"], indent=2))
+        return
+
     result = bt.run(days=days, write_csv=not no_csv)
     stats = result.stats(cfg.trading.starting_capital)
 

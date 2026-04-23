@@ -20,6 +20,18 @@ class SizingResult:
 class RiskManager:
     def __init__(self, cfg: RiskConfig) -> None:
         self.cfg = cfg
+        self.consecutive_losses = 0
+
+    def record_trade_result(self, pnl: float) -> None:
+        """Update the consecutive-loss counter. Called on every trade close."""
+        if pnl < 0:
+            self.consecutive_losses += 1
+        else:
+            self.consecutive_losses = 0
+
+    def reset(self) -> None:
+        """Clear internal trade-streak state (used between walk-forward windows)."""
+        self.consecutive_losses = 0
 
     def trading_halted(self, portfolio: Portfolio, equity: float) -> str | None:
         """Return a human-readable reason if trading should halt, else None."""
@@ -31,6 +43,11 @@ class RiskManager:
             total_dd = 1 - equity / portfolio.peak_equity
             if total_dd >= self.cfg.max_drawdown_pct:
                 return f"max drawdown hit ({total_dd:.2%})"
+        if (
+            self.cfg.max_consecutive_losses > 0
+            and self.consecutive_losses >= self.cfg.max_consecutive_losses
+        ):
+            return f"{self.consecutive_losses} consecutive losses"
         return None
 
     def can_open(self, portfolio: Portfolio) -> bool:
@@ -109,6 +126,22 @@ class RiskManager:
         if stop >= price or stop <= 0 or (tp > 0 and tp <= price):
             return SizingResult(0.0, 0.0, 0.0, "invalid stop/target ordering")
         return SizingResult(amount=amount, stop_loss=stop, take_profit=tp)
+
+    def should_scale_out(self, position: Position, price: float) -> bool:
+        """True once per trade, when price reaches entry + R * initial_risk.
+
+        ``R`` = ``self.cfg.scale_out_at_r``. The trigger fires exactly once;
+        subsequent calls return False even if price oscillates above the level.
+        """
+        if position.scaled_out or self.cfg.scale_out_at_r <= 0:
+            return False
+        initial_risk = position.entry_price - position.stop_loss
+        # If the stop has already trailed above entry (e.g. after break-even),
+        # we can't infer the original risk – skip the scale-out.
+        if initial_risk <= 0:
+            return False
+        trigger = position.entry_price + self.cfg.scale_out_at_r * initial_risk
+        return price >= trigger
 
     def maybe_move_to_breakeven(self, position: Position, price: float) -> None:
         """Move stop to entry once unrealised profit crosses the trigger."""

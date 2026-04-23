@@ -15,6 +15,13 @@ class Position:
     peak_price: float
     trailing_stop_pct: float
     opened_at: datetime
+    # Maximum favourable / adverse excursion (absolute price terms) since
+    # entry. Helps diagnose whether stops are too tight or TPs too distant.
+    mfe: float = 0.0
+    mae: float = 0.0
+    # Tracks whether scale-out has already fired so we only take partial
+    # profit once per trade.
+    scaled_out: bool = False
 
     def unrealised(self, price: float) -> float:
         return (price - self.entry_price) * self.amount
@@ -27,6 +34,14 @@ class Position:
         new_stop = self.peak_price * (1 - self.trailing_stop_pct)
         if new_stop > self.stop_loss:
             self.stop_loss = new_stop
+
+    def update_excursion(self, price: float) -> None:
+        """Track MFE/MAE as price moves. Call once per tick/bar."""
+        gain = price - self.entry_price
+        if gain > self.mfe:
+            self.mfe = gain
+        if gain < self.mae:
+            self.mae = gain
 
 
 @dataclass

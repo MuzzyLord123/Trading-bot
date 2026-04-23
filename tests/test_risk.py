@@ -145,6 +145,45 @@ def test_atr_stop_uses_volatility_distance():
     assert abs((result.take_profit - 100.0) - 6.0) < 1e-9
 
 
+def test_consecutive_loss_circuit_breaker():
+    rm = RiskManager(_cfg(max_consecutive_losses=3))
+    p = Portfolio.new(500.0)
+    assert rm.trading_halted(p, 500.0) is None
+    rm.record_trade_result(-10.0)
+    rm.record_trade_result(-10.0)
+    assert rm.trading_halted(p, 500.0) is None
+    rm.record_trade_result(-10.0)
+    assert "consecutive" in (rm.trading_halted(p, 500.0) or "")
+    rm.record_trade_result(5.0)  # win resets streak
+    assert rm.trading_halted(p, 500.0) is None
+
+
+def test_should_scale_out_triggers_once_at_r_multiple():
+    rm = RiskManager(_cfg(scale_out_at_r=1.0, scale_out_fraction=0.5))
+    pos = Position(
+        symbol="BTC/GBP", side="long", amount=1.0,
+        entry_price=100.0, stop_loss=97.0, take_profit=0.0,
+        peak_price=100.0, trailing_stop_pct=0.0,
+        opened_at=datetime.now(timezone.utc),
+    )
+    # initial R = 3, so trigger at 103
+    assert rm.should_scale_out(pos, 102.0) is False
+    assert rm.should_scale_out(pos, 103.0) is True
+    pos.scaled_out = True
+    assert rm.should_scale_out(pos, 110.0) is False
+
+
+def test_should_scale_out_disabled_when_stop_above_entry():
+    rm = RiskManager(_cfg(scale_out_at_r=1.0))
+    pos = Position(
+        symbol="BTC/GBP", side="long", amount=1.0,
+        entry_price=100.0, stop_loss=101.0, take_profit=0.0,
+        peak_price=100.0, trailing_stop_pct=0.0,
+        opened_at=datetime.now(timezone.utc),
+    )
+    assert rm.should_scale_out(pos, 200.0) is False
+
+
 def test_atr_mode_scales_size_inversely_with_volatility():
     rm = RiskManager(
         _cfg(

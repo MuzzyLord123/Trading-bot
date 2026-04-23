@@ -9,6 +9,7 @@ import pandas as pd
 
 from .config import Config
 from .exchange import Exchange
+from .execution import buy_fill, sell_fill
 from .factory import build_exchange
 from .indicators import atr as _atr
 from .logger import CsvLogger
@@ -39,25 +40,63 @@ class BacktestResult:
             if returns.std() > 0
             else 0.0
         )
+        # Sortino uses only downside deviation, a better fit for strategies
+        # with asymmetric return distributions (e.g. trend-following).
+        downside = returns[returns < 0]
+        sortino = (
+            float(returns.mean() / downside.std() * np.sqrt(ann_factor))
+            if len(downside) > 1 and downside.std() > 0
+            else 0.0
+        )
+        # Calmar = annualised return / max drawdown. Rewards smooth equity curves.
+        years = (
+            (self.equity_curve["timestamp"].iloc[-1] - self.equity_curve["timestamp"].iloc[0])
+            .total_seconds() / (365 * 24 * 3600)
+        )
+        ann_return = ((eq.iloc[-1] / starting_capital) ** (1 / years) - 1) if years > 0 else 0.0
+        calmar = float(ann_return / abs(max_dd)) if max_dd < 0 else 0.0
+        # Longest stretch where equity is below its peak (in bars).
+        underwater = (eq < peak).astype(int)
+        if underwater.any():
+            groups = (underwater != underwater.shift()).cumsum()
+            time_underwater = int(underwater.groupby(groups).sum().max())
+        else:
+            time_underwater = 0
+
         wins = [t for t in self.trades if t["pnl"] > 0]
         losses = [t for t in self.trades if t["pnl"] <= 0]
         gross_win = sum(t["pnl"] for t in wins)
         gross_loss = -sum(t["pnl"] for t in losses)
+        avg_win = gross_win / len(wins) if wins else 0.0
+        avg_loss = gross_loss / len(losses) if losses else 0.0
+        win_rate = len(wins) / len(self.trades) if self.trades else 0.0
+        # Expectancy = average PnL the strategy generates per trade, derived
+        # from the observed win rate and payoff ratio.
+        expectancy = (win_rate * avg_win) - ((1 - win_rate) * avg_loss)
+        avg_bars_held = (
+            sum(t.get("bars_held", 0) for t in self.trades) / len(self.trades)
+            if self.trades
+            else 0.0
+        )
         return {
             "final_equity": round(float(eq.iloc[-1]), 2),
             "total_return_pct": round(total_return * 100, 2),
+            "annualised_return_pct": round(ann_return * 100, 2),
             "max_drawdown_pct": round(max_dd * 100, 2),
             "sharpe": round(sharpe, 2),
+            "sortino": round(sortino, 2),
+            "calmar": round(calmar, 2),
+            "time_underwater_bars": time_underwater,
             "trades": len(self.trades),
-            "win_rate_pct": round(100 * len(wins) / len(self.trades), 2)
-            if self.trades
-            else 0.0,
+            "win_rate_pct": round(100 * win_rate, 2),
             "profit_factor": round(gross_win / gross_loss, 2) if gross_loss > 0 else 0.0,
             "avg_trade_pnl": round(
                 sum(t["pnl"] for t in self.trades) / len(self.trades), 2
             )
             if self.trades
             else 0.0,
+            "expectancy": round(expectancy, 2),
+            "avg_bars_held": round(avg_bars_held, 1),
         }
 
     def window_stats(self, n_windows: int = 4) -> list[dict]:
@@ -130,6 +169,71 @@ class Backtester:
         self.strategy = strategy
         self.risk = risk
 
+    def walk_forward(
+        self,
+        days: int = 180,
+        n_windows: int = 4,
+        data: dict[str, pd.DataFrame] | None = None,
+    ) -> dict:
+        """Split history into ``n_windows`` non-overlapping slices and run a
+        fresh backtest on each with a reset portfolio and risk state.
+
+        Unlike :meth:`BacktestResult.window_stats` (which slices one continuous
+        run), this reruns the strategy independently per window. It's closer to
+        a true out-of-sample check: wins in one window don't fund losses in the
+        next, and risk halts reset at each boundary.
+
+        Returns a dict with ``windows`` (per-window stats) and ``summary``
+        (aggregate and consistency metrics).
+        """
+        data = data if data is not None else self.load_data(days)
+        if not data:
+            raise RuntimeError("No market data loaded for walk-forward")
+        if n_windows < 2:
+            raise ValueError("walk-forward requires at least 2 windows")
+
+        timestamps = _aligned_timestamps(data)
+        if len(timestamps) < n_windows * 2:
+            raise RuntimeError(
+                f"Need at least {n_windows * 2} bars for {n_windows} windows"
+            )
+        size = len(timestamps) // n_windows
+
+        per_window: list[dict] = []
+        for i in range(n_windows):
+            start = i * size
+            end = len(timestamps) if i == n_windows - 1 else (i + 1) * size
+            window_ts = set(timestamps[start:end])
+            window_data = {
+                sym: df[df["timestamp"].isin(window_ts)].reset_index(drop=True)
+                for sym, df in data.items()
+            }
+            window_data = {k: v for k, v in window_data.items() if not v.empty}
+            if not window_data:
+                continue
+            self.risk.reset()
+            sub_result = self.run(data=window_data, write_csv=False)
+            stats = sub_result.stats(self.cfg.trading.starting_capital)
+            stats["window"] = i + 1
+            stats["start"] = str(timestamps[start])
+            stats["end"] = str(timestamps[end - 1])
+            per_window.append(stats)
+
+        # Aggregate: average return, share of profitable windows, dispersion.
+        returns = [w["total_return_pct"] for w in per_window]
+        sharpes = [w["sharpe"] for w in per_window]
+        summary = {
+            "n_windows": len(per_window),
+            "avg_return_pct": round(float(np.mean(returns)) if returns else 0.0, 2),
+            "median_return_pct": round(float(np.median(returns)) if returns else 0.0, 2),
+            "return_std_pct": round(float(np.std(returns)) if returns else 0.0, 2),
+            "profitable_windows": sum(1 for r in returns if r > 0),
+            "avg_sharpe": round(float(np.mean(sharpes)) if sharpes else 0.0, 2),
+            "worst_window_return_pct": round(min(returns), 2) if returns else 0.0,
+            "best_window_return_pct": round(max(returns), 2) if returns else 0.0,
+        }
+        return {"windows": per_window, "summary": summary}
+
     def load_data(self, days: int) -> dict[str, pd.DataFrame]:
         until = datetime.now(timezone.utc)
         since = until - timedelta(days=days)
@@ -176,8 +280,6 @@ class Backtester:
         portfolio = Portfolio.new(self.cfg.trading.starting_capital)
         result = BacktestResult(equity_curve=pd.DataFrame())
 
-        fee = self.cfg.risk.taker_fee_pct
-        slip = self.cfg.risk.slippage_pct
         cooldown = self.cfg.risk.cooldown_bars_after_loss
         equity_rows: list[dict] = []
         last_prices: dict[str, float] = {}
@@ -203,13 +305,16 @@ class Backtester:
                 price = prices.get(symbol)
                 if price is None:
                     continue
+                pos.update_excursion(price)
                 pos.update_trailing(price)
                 self.risk.maybe_move_to_breakeven(pos, price)
                 bars_held = bar_idx - opened_at_bar.get(symbol, bar_idx)
+                if self.risk.should_scale_out(pos, price):
+                    self._scale_out(portfolio, pos, price, ts, result.trades, bars_held)
                 reason = self.risk.should_exit(pos, price, bars_held=bars_held)
                 if reason:
                     pnl = self._close(
-                        portfolio, pos, price, ts, reason, fee, slip, result.trades
+                        portfolio, pos, price, ts, reason, result.trades, bars_held
                     )
                     opened_at_bar.pop(symbol, None)
                     if pnl < 0:
@@ -226,8 +331,10 @@ class Backtester:
                     pos = portfolio.positions.get(symbol)
 
                     if pos is not None and sig < 0:
+                        bars_held = bar_idx - opened_at_bar.get(symbol, bar_idx)
                         pnl = self._close(
-                            portfolio, pos, prices[symbol], ts, "exit_signal", fee, slip, result.trades
+                            portfolio, pos, prices[symbol], ts, "exit_signal",
+                            result.trades, bars_held,
                         )
                         opened_at_bar.pop(symbol, None)
                         if pnl < 0:
@@ -237,28 +344,26 @@ class Backtester:
                     if pos is None and sig > 0 and self.risk.can_open(portfolio):
                         if bar_idx < cooldown_until.get(symbol, 0):
                             continue
-                        price = prices[symbol]
-                        fill_price = price * (1 + slip)
+                        fill = buy_fill(prices[symbol], 1.0, self.cfg.risk)
                         atr_value = _last_atr(sub, self.cfg.risk) if self.cfg.risk.use_atr_stop else None
                         sizing = self.risk.size(
-                            "long", fill_price, equity, portfolio.cash,
+                            "long", fill.price, equity, portfolio.cash,
                             portfolio=portfolio, atr=atr_value,
                         )
                         if sizing.amount <= 0:
                             continue
-                        cost = sizing.amount * fill_price
-                        fee_cost = cost * fee
-                        if cost + fee_cost > portfolio.cash:
+                        entry_fill = buy_fill(prices[symbol], sizing.amount, self.cfg.risk)
+                        if entry_fill.cash_out > portfolio.cash:
                             continue
-                        portfolio.cash -= cost + fee_cost
+                        portfolio.cash -= entry_fill.cash_out
                         portfolio.positions[symbol] = Position(
                             symbol=symbol,
                             side="long",
-                            amount=sizing.amount,
-                            entry_price=fill_price,
+                            amount=entry_fill.amount,
+                            entry_price=entry_fill.price,
                             stop_loss=sizing.stop_loss,
                             take_profit=sizing.take_profit,
-                            peak_price=fill_price,
+                            peak_price=entry_fill.price,
                             trailing_stop_pct=self.cfg.risk.trailing_stop_pct,
                             opened_at=ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts,
                         )
@@ -268,8 +373,10 @@ class Backtester:
 
         for symbol, pos in list(portfolio.positions.items()):
             price = last_prices.get(symbol, pos.entry_price)
+            bars_held = len(merged_index) - 1 - opened_at_bar.get(symbol, len(merged_index) - 1)
             self._close(
-                portfolio, pos, price, merged_index[-1], "end_of_test", fee, slip, result.trades
+                portfolio, pos, price, merged_index[-1], "end_of_test",
+                result.trades, bars_held,
             )
 
         result.equity_curve = pd.DataFrame(equity_rows)
@@ -281,7 +388,10 @@ class Backtester:
                 eq_log.write({**row, "timestamp": row["timestamp"].isoformat()})
             trades_log = CsvLogger(
                 "reports/backtest_trades.csv",
-                ["timestamp", "symbol", "side", "price", "amount", "pnl", "reason"],
+                [
+                    "timestamp", "symbol", "side", "price", "amount",
+                    "pnl", "reason", "bars_held", "mfe", "mae",
+                ],
             )
             for t in result.trades:
                 trades_log.write({**t, "timestamp": t["timestamp"].isoformat()})
@@ -294,29 +404,65 @@ class Backtester:
         price: float,
         ts,
         reason: str,
-        fee: float,
-        slip: float,
         trades: list[dict],
+        bars_held: int = 0,
     ) -> float:
-        fill_price = price * (1 - slip)
-        proceeds = pos.amount * fill_price
-        fee_cost = proceeds * fee
-        pnl = (fill_price - pos.entry_price) * pos.amount - fee_cost
-        portfolio.cash += proceeds - fee_cost
+        fill = sell_fill(price, pos.amount, self.cfg.risk)
+        pnl = (fill.price - pos.entry_price) * fill.amount - fill.fee_cost
+        portfolio.cash += fill.cash_in
         portfolio.realised_pnl += pnl
+        self.risk.record_trade_result(pnl)
         del portfolio.positions[pos.symbol]
         trades.append(
             {
                 "timestamp": ts,
                 "symbol": pos.symbol,
                 "side": pos.side,
-                "price": fill_price,
-                "amount": pos.amount,
+                "price": fill.price,
+                "amount": fill.amount,
                 "pnl": pnl,
                 "reason": reason,
+                "bars_held": bars_held,
+                "mfe": round(pos.mfe, 6),
+                "mae": round(pos.mae, 6),
             }
         )
         return pnl
+
+    def _scale_out(
+        self,
+        portfolio: Portfolio,
+        pos: Position,
+        price: float,
+        ts,
+        trades: list[dict],
+        bars_held: int,
+    ) -> None:
+        partial = pos.amount * self.cfg.risk.scale_out_fraction
+        if partial <= 0 or partial >= pos.amount:
+            return
+        fill = sell_fill(price, partial, self.cfg.risk)
+        pnl = (fill.price - pos.entry_price) * fill.amount - fill.fee_cost
+        portfolio.cash += fill.cash_in
+        portfolio.realised_pnl += pnl
+        pos.amount -= fill.amount
+        pos.scaled_out = True
+        if pos.stop_loss < pos.entry_price:
+            pos.stop_loss = pos.entry_price
+        trades.append(
+            {
+                "timestamp": ts,
+                "symbol": pos.symbol,
+                "side": pos.side,
+                "price": fill.price,
+                "amount": fill.amount,
+                "pnl": pnl,
+                "reason": "scale_out",
+                "bars_held": bars_held,
+                "mfe": round(pos.mfe, 6),
+                "mae": round(pos.mae, 6),
+            }
+        )
 
 
 def _last_atr(df: pd.DataFrame, risk_cfg) -> float | None:

@@ -109,6 +109,8 @@ class FilteredStrategy(Strategy):
             return Signal.FLAT
 
         last_close = float(df["close"].iloc[-1])
+        if not pd.notna(last_close) or last_close <= 0:
+            return Signal.FLAT
 
         if self.require_uptrend:
             trend = ema(df["close"], self.trend_ema).iloc[-1]
@@ -141,7 +143,10 @@ class FilteredStrategy(Strategy):
 
         if self.volume_mult > 0:
             vol = df["volume"]
-            avg = vol.rolling(self.volume_period).mean().iloc[-1]
+            # Shift(1) so the rolling mean uses only PRIOR bars; comparing
+            # the current bar's volume to an average that already includes
+            # it biases the gate toward passing.
+            avg = vol.rolling(self.volume_period).mean().shift(1).iloc[-1]
             if pd.isna(avg) or vol.iloc[-1] < self.volume_mult * avg:
                 return Signal.FLAT
 

@@ -57,6 +57,14 @@ class RiskConfig:
     use_atr_stop: bool = False
     atr_period: int = 14
     atr_stop_multiplier: float = 2.0
+    # Halt trading after this many losing trades in a row (0 = disabled).
+    # Complements daily_loss_limit_pct and max_drawdown_pct.
+    max_consecutive_losses: int = 0
+    # Scale-out take-profit: when price reaches entry + scale_out_at_r * R
+    # (where R = initial stop distance), close scale_out_fraction of the
+    # position and move the remaining stop to break-even. 0 disables.
+    scale_out_at_r: float = 0.0
+    scale_out_fraction: float = 0.5
 
 
 @dataclass
@@ -190,6 +198,12 @@ class Config:
             errors.append("risk.atr_period must be >= 2")
         if r.atr_stop_multiplier <= 0:
             errors.append("risk.atr_stop_multiplier must be > 0")
+        if r.max_consecutive_losses < 0:
+            errors.append("risk.max_consecutive_losses must be >= 0")
+        if r.scale_out_at_r < 0:
+            errors.append("risk.scale_out_at_r must be >= 0")
+        if not 0 <= r.scale_out_fraction < 1:
+            errors.append("risk.scale_out_fraction must be in [0, 1)")
 
         if self.trading.mode == "live":
             if not self.secrets.get("api_key") or not self.secrets.get("api_secret"):

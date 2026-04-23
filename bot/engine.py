@@ -9,6 +9,7 @@ from rich.table import Table
 
 from .config import Config
 from .exchange import Exchange
+from .execution import buy_fill, sell_fill
 from .factory import build_exchange, is_stock_platform
 from .logger import CsvLogger, console
 from .news import NewsMonitor, NewsSignal
@@ -38,7 +39,10 @@ class TradingEngine:
         self.portfolio = Portfolio.new(cfg.trading.starting_capital)
         self.trade_log = CsvLogger(
             cfg.logging.trade_log,
-            ["timestamp", "mode", "symbol", "side", "price", "amount", "pnl", "reason"],
+            [
+                "timestamp", "mode", "symbol", "side", "price", "amount",
+                "pnl", "reason", "bars_held", "mfe", "mae",
+            ],
         )
         self.equity_log = CsvLogger(
             cfg.logging.equity_log, ["timestamp", "equity", "cash", "open_positions"]
@@ -136,9 +140,12 @@ class TradingEngine:
             price = prices.get(symbol)
             if price is None:
                 continue
+            pos.update_excursion(price)
             pos.update_trailing(price)
             self.risk.maybe_move_to_breakeven(pos, price)
             self._bars_held[symbol] = self._bars_held.get(symbol, 0) + 1
+            if self.risk.should_scale_out(pos, price):
+                self._scale_out(pos, price)
             reason = self.risk.should_exit(
                 pos, price, bars_held=self._bars_held.get(symbol, 0)
             )
@@ -207,10 +214,11 @@ class TradingEngine:
                 )
                 return
             amount = filled_amount
+            fee_cost = fill_price * amount * self.cfg.risk.taker_fee_pct
         else:
-            fill_price = price * (1 + self.cfg.risk.slippage_pct)
+            fill = buy_fill(price, amount, self.cfg.risk)
+            fill_price, fee_cost = fill.price, fill.fee_cost
 
-        fee_cost = amount * fill_price * self.cfg.risk.taker_fee_pct
         total_cost = amount * fill_price + fee_cost
         if total_cost > self.portfolio.cash:
             return
@@ -236,12 +244,63 @@ class TradingEngine:
                 "amount": round(amount, 8),
                 "pnl": "",
                 "reason": "entry",
+                "bars_held": "",
+                "mfe": "",
+                "mae": "",
             }
         )
         log.info("OPEN %s %.6f @ %.4f (stop %.4f, tp %.4f)",
                  symbol, amount, fill_price, sizing.stop_loss, sizing.take_profit)
         self.notifier.send(
             f"OPEN {symbol} {amount:.6f} @ {fill_price:.4f}"
+        )
+
+    def _scale_out(self, pos: Position, price: float) -> None:
+        """Close ``scale_out_fraction`` of the position and move stop to entry."""
+        fraction = self.cfg.risk.scale_out_fraction
+        partial = self.exchange.amount_to_precision(pos.symbol, pos.amount * fraction)
+        if partial <= 0 or partial >= pos.amount:
+            return
+        if self.cfg.trading.mode == "live":
+            try:
+                order = self.exchange.create_market_order(pos.symbol, "sell", partial)
+            except Exception as exc:
+                log.error("live scale-out failed for %s: %s", pos.symbol, exc)
+                return
+            fill_price = order.price or price
+            partial = order.amount or partial
+            fee_cost = fill_price * partial * self.cfg.risk.taker_fee_pct
+        else:
+            fill = sell_fill(price, partial, self.cfg.risk)
+            fill_price, fee_cost = fill.price, fill.fee_cost
+
+        pnl = (fill_price - pos.entry_price) * partial - fee_cost
+        self.portfolio.cash += partial * fill_price - fee_cost
+        self.portfolio.realised_pnl += pnl
+        pos.amount -= partial
+        pos.scaled_out = True
+        # Lock in break-even on the remainder.
+        if pos.stop_loss < pos.entry_price:
+            pos.stop_loss = pos.entry_price
+
+        self.trade_log.write(
+            {
+                "timestamp": _now_iso(),
+                "mode": self.cfg.trading.mode,
+                "symbol": pos.symbol,
+                "side": "sell",
+                "price": round(fill_price, 8),
+                "amount": round(partial, 8),
+                "pnl": round(pnl, 4),
+                "reason": "scale_out",
+                "bars_held": self._bars_held.get(pos.symbol, 0),
+                "mfe": round(pos.mfe, 4),
+                "mae": round(pos.mae, 4),
+            }
+        )
+        log.info(
+            "SCALE-OUT %s %.6f @ %.4f pnl=%.2f (remaining %.6f, stop→%.4f)",
+            pos.symbol, partial, fill_price, pnl, pos.amount, pos.stop_loss,
         )
 
     def _close(self, pos: Position, price: float, reason: str) -> None:
@@ -253,15 +312,17 @@ class TradingEngine:
                 log.error("live close failed for %s: %s", pos.symbol, exc)
                 return
             fill_price = order.price or price
+            fee_cost = fill_price * amount * self.cfg.risk.taker_fee_pct
         else:
-            fill_price = price * (1 - self.cfg.risk.slippage_pct)
+            fill = sell_fill(price, amount, self.cfg.risk)
+            fill_price, fee_cost = fill.price, fill.fee_cost
 
-        proceeds = amount * fill_price
-        fee_cost = proceeds * self.cfg.risk.taker_fee_pct
         pnl = (fill_price - pos.entry_price) * amount - fee_cost
-        self.portfolio.cash += proceeds - fee_cost
+        self.portfolio.cash += amount * fill_price - fee_cost
         self.portfolio.realised_pnl += pnl
+        self.risk.record_trade_result(pnl)
         symbol = pos.symbol
+        bars_held = self._bars_held.get(symbol, 0)
         del self.portfolio.positions[symbol]
         self._bars_held.pop(symbol, None)
         if pnl < 0 and self.cfg.risk.cooldown_bars_after_loss > 0:
@@ -277,6 +338,9 @@ class TradingEngine:
                 "amount": round(amount, 8),
                 "pnl": round(pnl, 4),
                 "reason": reason,
+                "bars_held": bars_held,
+                "mfe": round(pos.mfe, 4),
+                "mae": round(pos.mae, 4),
             }
         )
         log.info("CLOSE %s %.6f @ %.4f pnl=%.2f (%s)",

@@ -227,8 +227,10 @@ class NewsMonitor:
     def _save_seen(self) -> None:
         self.dedup_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            # Cap to last 2000 ids to avoid unbounded growth.
-            lines = list(self._seen)[-2000:]
+            # Sort before truncating so the retained set is deterministic
+            # (Python set iteration order depends on hash randomisation, so
+            # list(self._seen)[-2000:] would keep a different slice per run).
+            lines = sorted(self._seen)[-2000:]
             self.dedup_path.write_text("\n".join(lines))
         except Exception as exc:
             log.warning("could not persist news dedup cache: %s", exc)
