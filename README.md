@@ -130,7 +130,9 @@ python run.py
 | Walk-forward (4 windows)   | `python backtest.py --days 365 --walk-forward 4`  |
 | Paper / live trading       | `python run.py`                                   |
 | Live without confirm prompt| `python run.py --yes`                             |
-| Streamlit dashboard        | `streamlit run dashboard.py`                      |
+| Streamlit dashboard        | `python launch_dashboard.py`                      |
+| Dashboard (no auto-browser)| `python launch_dashboard.py --browser none`       |
+| Dashboard (force Safari)   | `python launch_dashboard.py --browser safari`     |
 | Parameter sweep            | `python scripts/sweep.py`                         |
 | Compare strategies         | `python scripts/compare_strategies.py`            |
 | Run tests                  | `python -m pytest`                                |
