@@ -38,7 +38,7 @@ def _maybe_filter(
         return strategy
     kwargs = {k: v for k, v in filter_cfg.items() if k != "enabled"}
 
-    # Drop legacy crypto-only Fear & Greed keys so old configs keep loading.
+    # Silently drop legacy Fear & Greed keys so old configs still load.
     for legacy in ("fng_enabled", "fng_days", "fng_min", "fng_max"):
         kwargs.pop(legacy, None)
 

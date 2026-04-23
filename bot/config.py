@@ -111,8 +111,8 @@ class Config:
         # Expand universe tokens ('SP500' etc.) in trading.symbols.
         from .universe import expand_universe_tokens
         trading_cfg.symbols = expand_universe_tokens(trading_cfg.symbols)
-        # Drop legacy ccxt-only keys from older configs so they don't blow up
-        # the dataclass constructor.
+        # Only pass known keys so legacy configs (which may include fields
+        # that no longer exist on ExchangeConfig) still load.
         exchange_raw = {
             k: v for k, v in raw.get("exchange", {}).items()
             if k in {"name", "sandbox"}

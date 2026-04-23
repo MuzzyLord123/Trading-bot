@@ -12,10 +12,8 @@
 
 exchange:
   name: trading212
-  requires_password: false
   # sandbox: true -> uses demo.trading212.com (set a demo API key in .env).
   sandbox: false
-  enable_rate_limit: true
 
 trading:
   # Always start on paper. Switch to 'live' only after a month of clean paper runs.
