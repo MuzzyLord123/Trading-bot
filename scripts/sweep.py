@@ -6,9 +6,10 @@ Runs every config against the same synthetic regimes (trending / choppy /
 bear) with multiple seeds for statistical stability, then aggregates the
 results and prints a ranked report.
 
-IMPORTANT CAVEAT: synthetic data is not the same as Kraken data. These
-numbers tell us *which configs have an edge at all* and *how WR/return
-trade off*. Always validate the winner on real data with backtest.py.
+IMPORTANT CAVEAT: synthetic data is not the same as real market data.
+These numbers tell us *which configs have an edge at all* and *how WR /
+return trade off*. Always validate the winner on real Yahoo Finance /
+Trading 212 data with backtest.py.
 """
 from __future__ import annotations
 

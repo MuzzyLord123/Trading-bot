@@ -8,9 +8,8 @@ Two responsibilities in this module:
   * :class:`Trading212Broker` – REST client for placing orders and reading
     balance/positions on Trading 212 Invest.
 
-These are combined in :class:`StocksExchange` which implements the same
-interface as the ccxt-backed :class:`bot.exchange.Exchange`, so the engine
-and backtester don't need to care which asset class they're on.
+These are combined in :class:`StocksExchange` – the single adapter the
+engine and backtester talk to.
 
 Notes on data vs execution split:
   * Trading 212 does NOT expose historical candles via their API. Yahoo

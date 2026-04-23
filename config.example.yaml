@@ -63,7 +63,7 @@ risk:
   # 15 on hourly bars = faster turnover = more trades/year.
   max_open_positions: 15
 
-  # Stops sized for daily-bar stock volatility (smaller than crypto hourly).
+  # Stops sized for hourly-bar stock volatility.
   stop_loss_pct: 0.04
   take_profit_pct: 0.10     # 2.5:1 R:R
 

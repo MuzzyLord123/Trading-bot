@@ -59,13 +59,12 @@ class TradingEngine:
     def run_forever(self) -> None:
         self.exchange.load_markets()
         log.info(
-            "Engine starting in [bold]%s[/bold] mode on %s",
+            "Engine starting in [bold]%s[/bold] mode on Trading 212",
             self.cfg.trading.mode,
-            self.cfg.exchange.name,
             extra={"markup": True},
         )
         self.notifier.send(
-            f"Trading bot started in {self.cfg.trading.mode} mode on {self.cfg.exchange.name}"
+            f"Trading bot started in {self.cfg.trading.mode} mode on Trading 212"
         )
         while True:
             try:

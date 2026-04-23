@@ -24,14 +24,14 @@ def main(config_path: str, yes: bool) -> None:
     log = setup_logging(cfg.logging.level)
 
     if cfg.trading.mode == "live":
-        if not cfg.secrets["api_key"] or not cfg.secrets["api_secret"]:
+        if not cfg.secrets.get("trading212_api_key"):
             console().print(
-                "[red]Live mode requires EXCHANGE_API_KEY and EXCHANGE_API_SECRET in .env[/red]"
+                "[red]Live mode requires TRADING212_API_KEY in .env[/red]"
             )
             sys.exit(1)
         if not yes:
             console().print(
-                f"[yellow]About to trade LIVE on {cfg.exchange.name} with "
+                f"[yellow]About to trade LIVE on Trading 212 with "
                 f"{cfg.trading.starting_capital} {cfg.trading.quote_currency}.[/yellow]"
             )
             answer = input("Type 'LIVE' to continue: ").strip()

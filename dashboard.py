@@ -225,7 +225,7 @@ cfg = load_yaml(CONFIG_PATH)
 ccy = cfg.get("trading", {}).get("quote_currency", "GBP")
 starting_capital = float(cfg.get("trading", {}).get("starting_capital", 0.0))
 mode = cfg.get("trading", {}).get("mode", "paper").upper()
-exchange_name = cfg.get("exchange", {}).get("name", "—")
+exchange_name = "Trading 212"
 
 with st.sidebar:
     st.markdown("### 📈 Trading Bot")

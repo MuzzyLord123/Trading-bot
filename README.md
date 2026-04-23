@@ -163,16 +163,13 @@ normalises them to backslashes on Windows automatically.
 bot/
   engine.py          # main event loop (paper + live)
   backtest.py        # historical replay + walk-forward
-  exchange.py        # ccxt wrapper with retry logic
   execution.py       # shared fee/slippage/fill helpers
   portfolio.py       # cash, positions, MFE/MAE tracking
   risk.py            # sizing, stops, kill switches, circuit breaker
   indicators.py      # technical indicators (pandas/numpy)
   logger.py          # rich console + CSV loggers
   notifications.py   # optional Telegram alerts
-  news.py            # crypto news feed + classifier
-  news_stocks.py     # earnings calendar + gap detector
-  sentiment.py       # fear & greed index
+  news_stocks.py     # earnings calendar + bearish-gap detector
   stocks.py          # Trading 212 + yfinance adapter
   universe.py        # S&P 500 / Nasdaq-100 expansion
   strategies/
