@@ -23,7 +23,27 @@ so it works against 100+ exchanges.
 - **Structured logging** of every trade and equity snapshot to CSV.
 - **Configuration by YAML** – no code changes needed to retune.
 
+## Requirements
+
+- **Python 3.10 or newer** on every supported platform.
+- Git (to clone the repo).
+- ~200 MB of disk for the virtualenv and cached market data.
+
+Check your version:
+
+```bash
+python --version   # macOS / Linux
+py --version       # Windows (py launcher)
+```
+
+If `python` isn't found on your PATH, try `python3` (macOS/Linux) or `py`
+(Windows). All commands below use `python`; substitute as needed.
+
 ## Quick start
+
+Pick the block that matches your platform. All three do the same thing.
+
+### macOS / Linux (bash or zsh)
 
 ```bash
 python -m venv .venv
@@ -32,18 +52,77 @@ pip install -r requirements.txt
 
 cp config.example.yaml config.yaml
 cp .env.example .env
-# edit config.yaml and .env
+# edit config.yaml and .env in your editor of choice
 
-# 1. Backtest the strategy on recent history
-python backtest.py --days 180
-
-# 2. Run in paper mode (real prices, fake money)
-python run.py
-
-# 3. Go live (only after you've tested the above!)
-#    Edit config.yaml: trading.mode = live, then:
+python backtest.py --days 180        # 1. Backtest
+python run.py                        # 2. Paper trade
+# 3. Edit config.yaml -> trading.mode: live, then re-run
 python run.py
 ```
+
+### Windows (PowerShell)
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+Copy-Item config.example.yaml config.yaml
+Copy-Item .env.example .env
+# edit config.yaml and .env (e.g. `notepad config.yaml`)
+
+python backtest.py --days 180
+python run.py
+# edit config.yaml -> trading.mode: live, then re-run
+python run.py
+```
+
+> If PowerShell blocks the activation script with a *"running scripts is
+> disabled"* error, run this once (as your own user, not admin):
+> `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`
+
+### Windows (Command Prompt / cmd.exe)
+
+```bat
+python -m venv .venv
+.venv\Scripts\activate.bat
+pip install -r requirements.txt
+
+copy config.example.yaml config.yaml
+copy .env.example .env
+REM edit config.yaml and .env (e.g. `notepad config.yaml`)
+
+python backtest.py --days 180
+python run.py
+REM edit config.yaml -> trading.mode: live, then re-run
+python run.py
+```
+
+## Command reference
+
+| Task                       | Command                                           |
+| -------------------------- | ------------------------------------------------- |
+| Backtest (default 180 days)| `python backtest.py`                              |
+| Backtest, custom window    | `python backtest.py --days 365`                   |
+| Walk-forward (4 windows)   | `python backtest.py --days 365 --walk-forward 4`  |
+| Paper / live trading       | `python run.py`                                   |
+| Live without confirm prompt| `python run.py --yes`                             |
+| Streamlit dashboard        | `streamlit run dashboard.py`                      |
+| Parameter sweep            | `python scripts/sweep.py`                         |
+| Compare strategies         | `python scripts/compare_strategies.py`            |
+| Run tests                  | `python -m pytest`                                |
+| Run one test file          | `python -m pytest tests/test_risk.py`             |
+
+The quote style in arguments is the same across platforms (`--days 180`, no
+escaping needed). File paths use forward slashes in config files; Python
+normalises them to backslashes on Windows automatically.
+
+### Leaving / re-entering the virtualenv
+
+| Action  | macOS / Linux             | PowerShell                      | CMD                            |
+| ------- | ------------------------- | ------------------------------- | ------------------------------ |
+| Enter   | `source .venv/bin/activate` | `.\.venv\Scripts\Activate.ps1`| `.venv\Scripts\activate.bat`   |
+| Leave   | `deactivate`              | `deactivate`                    | `deactivate`                   |
 
 ## Safety defaults
 
@@ -57,14 +136,19 @@ python run.py
 ```
 bot/
   engine.py          # main event loop (paper + live)
-  backtest.py        # historical replay engine
+  backtest.py        # historical replay + walk-forward
   exchange.py        # ccxt wrapper with retry logic
-  portfolio.py       # cash, positions, equity tracking
-  risk.py            # sizing, stops, kill switches
+  execution.py       # shared fee/slippage/fill helpers
+  portfolio.py       # cash, positions, MFE/MAE tracking
+  risk.py            # sizing, stops, kill switches, circuit breaker
   indicators.py      # technical indicators (pandas/numpy)
-  data.py            # OHLCV fetch + caching
   logger.py          # rich console + CSV loggers
   notifications.py   # optional Telegram alerts
+  news.py            # crypto news feed + classifier
+  news_stocks.py     # earnings calendar + gap detector
+  sentiment.py       # fear & greed index
+  stocks.py          # Trading 212 + yfinance adapter
+  universe.py        # S&P 500 / Nasdaq-100 expansion
   strategies/
     base.py
     ma_crossover.py
@@ -72,8 +156,13 @@ bot/
     macd.py
     bollinger.py
     ensemble.py
+    filtered.py      # trend / ADX / ATR / volume gates
 run.py               # entry point for paper/live
 backtest.py          # entry point for backtests
+dashboard.py         # Streamlit monitoring UI
+scripts/
+  sweep.py           # parameter sweep
+  compare_strategies.py
 tests/               # pytest suite
 ```
 
@@ -96,6 +185,25 @@ registering the name in `bot/strategies/__init__.py`.
    withdrawal** permissions. Set IP allowlisting if your exchange
    supports it.
 4. Put your credentials in `.env`, set `trading.mode: live`, start small.
+
+## Platform notes
+
+- **Line endings**: the repo uses LF. On Windows, set
+  `git config --global core.autocrlf input` to avoid CRLF being committed
+  back. Python reads both fine regardless.
+- **Long paths on Windows**: the bot writes to `logs/`, `reports/`, and
+  `cache/` under the project directory. If you hit a *"path too long"*
+  error, enable long paths:
+  `git config --global core.longpaths true` and reboot after enabling
+  `HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled`.
+- **Stopping the bot**: `Ctrl+C` works on all three platforms and triggers
+  a graceful shutdown with a final notification.
+- **Running as a background service**: use `launchd` (macOS), `systemd`
+  (Linux) or Task Scheduler (Windows). The bot has no daemonisation
+  built in — run it from a supervisor of your choice.
+- **Telegram alerts**: the `requests`-based notifier works on all
+  platforms. No firewall exemptions needed — it only makes outbound HTTPS
+  calls.
 
 ## Disclaimer
 
