@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 from datetime import datetime, timezone
 
@@ -106,8 +107,12 @@ class TradingEngine:
                 df = self.exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
             if df is None or getattr(df, "empty", True):
                 continue
+            last_close = float(df["close"].iloc[-1])
+            if not math.isfinite(last_close) or last_close <= 0:
+                log.warning("invalid price for %s: %s – skipping", symbol, last_close)
+                continue
             candles[symbol] = df
-            prices[symbol] = float(df["close"].iloc[-1])
+            prices[symbol] = last_close
 
         if not prices:
             log.warning("No price data this tick")
@@ -182,8 +187,6 @@ class TradingEngine:
         amount = self.exchange.amount_to_precision(symbol, sizing.amount)
         if amount <= 0:
             return
-        cost = amount * price
-        fee_cost = cost * self.cfg.risk.taker_fee_pct
 
         if self.cfg.trading.mode == "live":
             try:
@@ -192,10 +195,20 @@ class TradingEngine:
                 log.error("live order failed for %s: %s", symbol, exc)
                 return
             fill_price = order.price or price
-            fee_cost = fill_price * amount * self.cfg.risk.taker_fee_pct
+            filled_amount = order.amount or amount
+            # Reject a severely under-filled order rather than opening a mis-sized
+            # position whose stop/TP were computed for the full amount.
+            if filled_amount < amount * 0.95:
+                log.warning(
+                    "partial fill on %s: requested %.8f, filled %.8f – aborting",
+                    symbol, amount, filled_amount,
+                )
+                return
+            amount = filled_amount
         else:
             fill_price = price * (1 + self.cfg.risk.slippage_pct)
 
+        fee_cost = amount * fill_price * self.cfg.risk.taker_fee_pct
         total_cost = amount * fill_price + fee_cost
         if total_cost > self.portfolio.cash:
             return
@@ -275,6 +288,9 @@ class TradingEngine:
         return until is not None and time.time() < until
 
     def _handle_news(self, signal: NewsSignal, prices: dict[str, float]) -> None:
+        if signal.symbol not in self.cfg.trading.symbols:
+            log.debug("news symbol %s not in trading universe, ignoring", signal.symbol)
+            return
         log.info(
             "news %s %+d imp=%.1f: %s",
             signal.symbol, signal.direction, signal.importance, signal.title,

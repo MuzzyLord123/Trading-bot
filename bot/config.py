@@ -112,7 +112,7 @@ class Config:
         # Expand universe tokens ('SP500' etc.) in trading.symbols.
         from .universe import expand_universe_tokens
         trading_cfg.symbols = expand_universe_tokens(trading_cfg.symbols)
-        return cls(
+        cfg = cls(
             exchange=ExchangeConfig(**raw.get("exchange", {})),
             trading=trading_cfg,
             risk=RiskConfig(**raw.get("risk", {})),
@@ -129,3 +129,73 @@ class Config:
                 "trading212_api_key": os.getenv("TRADING212_API_KEY", ""),
             },
         )
+        cfg.validate()
+        return cfg
+
+    def validate(self) -> None:
+        """Raise ValueError if the config contains obviously bad values.
+
+        Catches common misconfigurations (empty symbol list, out-of-range
+        percentages, missing live-mode secrets) before the engine starts
+        placing orders with nonsensical parameters.
+        """
+        errors: list[str] = []
+
+        if self.trading.mode not in ("paper", "live"):
+            errors.append(f"trading.mode must be 'paper' or 'live', got '{self.trading.mode}'")
+        if not self.trading.symbols:
+            errors.append("trading.symbols must not be empty")
+        if self.trading.starting_capital <= 0:
+            errors.append("trading.starting_capital must be > 0")
+        if self.trading.poll_interval_seconds <= 0:
+            errors.append("trading.poll_interval_seconds must be > 0")
+        if self.trading.history_candles <= 0:
+            errors.append("trading.history_candles must be > 0")
+
+        r = self.risk
+        fractions = {
+            "risk_per_trade": r.risk_per_trade,
+            "max_position_pct": r.max_position_pct,
+            "stop_loss_pct": r.stop_loss_pct,
+            "daily_loss_limit_pct": r.daily_loss_limit_pct,
+            "max_drawdown_pct": r.max_drawdown_pct,
+        }
+        for name, value in fractions.items():
+            if not 0 < value < 1:
+                errors.append(f"risk.{name} must be in (0, 1), got {value}")
+        non_negative = {
+            "take_profit_pct": r.take_profit_pct,
+            "trailing_stop_pct": r.trailing_stop_pct,
+            "taker_fee_pct": r.taker_fee_pct,
+            "slippage_pct": r.slippage_pct,
+            "breakeven_trigger_pct": r.breakeven_trigger_pct,
+            "min_reward_to_risk": r.min_reward_to_risk,
+        }
+        for name, value in non_negative.items():
+            if value < 0:
+                errors.append(f"risk.{name} must be >= 0, got {value}")
+        if r.max_open_positions <= 0:
+            errors.append("risk.max_open_positions must be > 0")
+        if r.cooldown_bars_after_loss < 0:
+            errors.append("risk.cooldown_bars_after_loss must be >= 0")
+        if r.time_stop_bars < 0:
+            errors.append("risk.time_stop_bars must be >= 0")
+
+        if self.trading.mode == "live":
+            if not self.secrets.get("api_key") or not self.secrets.get("api_secret"):
+                errors.append(
+                    "live mode requires EXCHANGE_API_KEY and EXCHANGE_API_SECRET in env"
+                )
+            if self.exchange.requires_password and not self.secrets.get("api_password"):
+                errors.append("exchange requires password but EXCHANGE_API_PASSWORD is empty")
+
+        if self.notifications.telegram and (
+            not self.secrets.get("telegram_bot_token")
+            or not self.secrets.get("telegram_chat_id")
+        ):
+            errors.append(
+                "notifications.telegram enabled but TELEGRAM_BOT_TOKEN/CHAT_ID missing"
+            )
+
+        if errors:
+            raise ValueError("Invalid config:\n  - " + "\n  - ".join(errors))

@@ -59,7 +59,7 @@ class RiskManager:
         Rejects trades whose reward:risk ratio is below ``min_reward_to_risk``.
         """
         stop_pct = self.cfg.stop_loss_pct
-        if stop_pct <= 0 or price <= 0 or side != "long":
+        if stop_pct <= 0 or stop_pct >= 1 or price <= 0 or side != "long":
             return SizingResult(0.0, 0.0, 0.0, "invalid inputs")
 
         if self.cfg.take_profit_pct > 0 and self.cfg.min_reward_to_risk > 0:
@@ -83,6 +83,9 @@ class RiskManager:
 
         stop = price * (1 - stop_pct)
         tp = price * (1 + self.cfg.take_profit_pct) if self.cfg.take_profit_pct > 0 else 0.0
+        # Invariant for long entries: stop < entry < take_profit (if TP is set).
+        if stop >= price or (tp > 0 and tp <= price):
+            return SizingResult(0.0, 0.0, 0.0, "invalid stop/target ordering")
         return SizingResult(amount=amount, stop_loss=stop, take_profit=tp)
 
     def maybe_move_to_breakeven(self, position: Position, price: float) -> None:

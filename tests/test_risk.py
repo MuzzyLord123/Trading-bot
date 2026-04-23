@@ -72,6 +72,18 @@ def test_trading_halted_on_max_drawdown():
     assert rm.trading_halted(p, 530.0) is not None
 
 
+def test_size_rejects_stop_pct_out_of_range():
+    rm = RiskManager(_cfg(stop_loss_pct=1.5))
+    result = rm.size("long", price=100.0, equity=500.0, cash=500.0)
+    assert result.amount == 0.0
+
+
+def test_size_enforces_stop_below_entry_below_tp():
+    rm = RiskManager(_cfg())
+    result = rm.size("long", price=100.0, equity=500.0, cash=500.0)
+    assert result.stop_loss < 100.0 < result.take_profit
+
+
 def test_trailing_stop_ratchets_up():
     pos = Position(
         symbol="BTC/GBP",
