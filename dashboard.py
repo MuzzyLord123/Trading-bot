@@ -610,22 +610,105 @@ with tabs[2]:
 
 # -------------------------- News tab ------------------------------------
 with tabs[3]:
-    st.subheader("News-driven actions")
-    news_trades_df = load_trades()
-    if news_trades_df.empty:
-        st.info("No trades yet — no news-driven actions to show.")
+    st.subheader("Company news")
+    symbols = list((cfg or {}).get("trading", {}).get("symbols", []))
+    # Expand universe tokens (SP500 / NASDAQ100) exactly like the bot does so
+    # the dashboard shows news for every ticker the engine would actually trade.
+    try:
+        from bot.universe import expand_universe_tokens
+        expanded_symbols = expand_universe_tokens(symbols) if symbols else []
+    except Exception as exc:  # universe fetch can fail without net
+        expanded_symbols = symbols
+        st.caption(f"Universe expansion failed ({exc}); using raw symbols list.")
+
+    if not expanded_symbols:
+        st.info(
+            "No symbols configured. Add some to `trading.symbols` in the Config tab "
+            "(e.g. `SP500`, `NASDAQ100`, or explicit tickers) and the news feed "
+            "will populate automatically."
+        )
     else:
-        news_only = news_trades_df[
-            news_trades_df["reason"].astype(str).str.contains("news", na=False)
-        ]
-        if news_only.empty:
-            st.caption(
-                "No news-triggered trades yet. Enable `news.enabled: true` "
-                "in Config and run in live/paper mode."
+        st.caption(
+            f"Watching **{len(expanded_symbols)}** tickers. "
+            "News comes from Yahoo Finance (free, unauthenticated) and is cached "
+            "locally for 15 minutes."
+        )
+
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            scope = st.radio(
+                "Scope",
+                ["Full universe", "Open positions only", "Pick a ticker"],
+                horizontal=True,
             )
+        with col2:
+            per_symbol = st.number_input(
+                "Items / ticker", min_value=1, max_value=20, value=3, step=1
+            )
+        with col3:
+            total_cap = st.number_input(
+                "Total shown", min_value=10, max_value=500, value=100, step=10
+            )
+
+        target_symbols: list[str] = []
+        if scope == "Full universe":
+            # 500 symbols × a network round-trip each = slow; cap the live
+            # fetch set and rely on the cache for the rest.
+            batch_size = st.slider(
+                "Batch size (tickers to refresh this load)",
+                min_value=10, max_value=min(500, len(expanded_symbols)),
+                value=min(50, len(expanded_symbols)), step=10,
+                help=(
+                    "Yahoo is rate-limited. Fetch news for this many tickers now; "
+                    "cached news for the rest is still shown below."
+                ),
+            )
+            target_symbols = expanded_symbols[:batch_size]
+        elif scope == "Open positions only":
+            trades_now = load_trades()
+            if trades_now.empty:
+                st.info("No open positions – no news to fetch.")
+            else:
+                opens = set(trades_now.loc[trades_now["side"] == "buy", "symbol"])
+                closes = trades_now.loc[trades_now["side"] == "sell", "symbol"]
+                open_now = sorted(opens - set(closes))
+                target_symbols = open_now
+                st.caption(
+                    f"{len(open_now)} open position(s): {', '.join(open_now) or '—'}"
+                )
         else:
-            st.dataframe(news_only.sort_values("timestamp", ascending=False),
-                         use_container_width=True, hide_index=True)
+            pick = st.selectbox("Ticker", expanded_symbols)
+            target_symbols = [pick]
+
+        refresh = st.button("🔄 Refresh now (bypass cache)")
+
+        if target_symbols:
+            with st.spinner(f"Fetching news for {len(target_symbols)} ticker(s)…"):
+                from bot.news_feed import fetch_news_bulk, clear_cache
+                if refresh:
+                    for s in target_symbols:
+                        clear_cache(s)
+                items = fetch_news_bulk(
+                    target_symbols,
+                    per_symbol_limit=int(per_symbol),
+                    total_limit=int(total_cap),
+                )
+
+            if not items:
+                st.info(
+                    "No news returned. Yahoo may be rate-limiting – wait a minute "
+                    "and click refresh, or narrow the scope."
+                )
+            else:
+                st.caption(f"Showing **{len(items)}** headline(s).")
+                for item in items:
+                    when = item.published_dt.strftime("%Y-%m-%d %H:%M UTC")
+                    title_md = f"**[{item.title}]({item.link})**" if item.link else f"**{item.title}**"
+                    st.markdown(f"`{item.symbol}` · {when} · *{item.publisher or 'unknown'}*")
+                    st.markdown(title_md)
+                    if item.summary:
+                        st.caption(item.summary)
+                    st.divider()
 
 
 # -------------------------- Backtest tab --------------------------------

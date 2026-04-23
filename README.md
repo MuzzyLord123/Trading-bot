@@ -170,6 +170,7 @@ bot/
   logger.py          # rich console + CSV loggers
   notifications.py   # optional Telegram alerts
   news_stocks.py     # earnings calendar + bearish-gap detector
+  news_feed.py       # per-ticker news headlines (for the dashboard)
   stocks.py          # Trading 212 + yfinance adapter
   universe.py        # S&P 500 / Nasdaq-100 expansion
   strategies/
