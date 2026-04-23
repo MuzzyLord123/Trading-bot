@@ -10,6 +10,7 @@ import pandas as pd
 from .config import Config
 from .exchange import Exchange
 from .factory import build_exchange
+from .indicators import atr as _atr
 from .logger import CsvLogger
 from .portfolio import Portfolio, Position
 from .risk import RiskManager
@@ -58,6 +59,50 @@ class BacktestResult:
             if self.trades
             else 0.0,
         }
+
+    def window_stats(self, n_windows: int = 4) -> list[dict]:
+        """Split the equity curve into ``n_windows`` equal slices and report
+        per-window return, max drawdown and Sharpe.
+
+        Useful as a cheap stability check: if the overall Sharpe is driven by
+        one good window, the strategy is unlikely to generalise.
+        """
+        if self.equity_curve.empty or n_windows < 1:
+            return []
+        n = len(self.equity_curve)
+        if n < n_windows * 2:
+            return []
+        size = n // n_windows
+        out: list[dict] = []
+        for i in range(n_windows):
+            start = i * size
+            end = n if i == n_windows - 1 else (i + 1) * size
+            window = self.equity_curve.iloc[start:end]
+            if len(window) < 2:
+                continue
+            eq = window["equity"]
+            ret = float(eq.iloc[-1] / eq.iloc[0] - 1)
+            peak = eq.cummax()
+            dd = (eq - peak) / peak
+            max_dd = float(dd.min()) if not dd.empty else 0.0
+            rets = eq.pct_change().dropna()
+            ann = _annualisation(window["timestamp"])
+            sharpe = (
+                float(rets.mean() / rets.std() * np.sqrt(ann))
+                if rets.std() > 0
+                else 0.0
+            )
+            out.append(
+                {
+                    "window": i + 1,
+                    "start": str(window["timestamp"].iloc[0]),
+                    "end": str(window["timestamp"].iloc[-1]),
+                    "return_pct": round(ret * 100, 2),
+                    "max_drawdown_pct": round(max_dd * 100, 2),
+                    "sharpe": round(sharpe, 2),
+                }
+            )
+        return out
 
 
 def _annualisation(timestamps: pd.Series) -> float:
@@ -194,8 +239,10 @@ class Backtester:
                             continue
                         price = prices[symbol]
                         fill_price = price * (1 + slip)
+                        atr_value = _last_atr(sub, self.cfg.risk) if self.cfg.risk.use_atr_stop else None
                         sizing = self.risk.size(
-                            "long", fill_price, equity, portfolio.cash, portfolio=portfolio
+                            "long", fill_price, equity, portfolio.cash,
+                            portfolio=portfolio, atr=atr_value,
                         )
                         if sizing.amount <= 0:
                             continue
@@ -270,6 +317,20 @@ class Backtester:
             }
         )
         return pnl
+
+
+def _last_atr(df: pd.DataFrame, risk_cfg) -> float | None:
+    period = risk_cfg.atr_period
+    if len(df) < period + 1:
+        return None
+    try:
+        series = _atr(df, period).dropna()
+    except Exception:
+        return None
+    if series.empty:
+        return None
+    value = float(series.iloc[-1])
+    return value if np.isfinite(value) and value > 0 else None
 
 
 def _aligned_timestamps(data: dict[str, pd.DataFrame]) -> list:

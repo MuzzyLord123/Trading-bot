@@ -51,6 +51,12 @@ class RiskConfig:
     # Halve risk per trade while drawdown from peak exceeds this fraction.
     drawdown_risk_reduction_threshold: float = 0.05
     drawdown_risk_reduction_factor: float = 0.5
+    # Volatility-adaptive stop: when True, stop distance = atr * multiplier
+    # instead of price * stop_loss_pct. Position size scales inversely so
+    # cash-at-risk per trade stays constant across volatility regimes.
+    use_atr_stop: bool = False
+    atr_period: int = 14
+    atr_stop_multiplier: float = 2.0
 
 
 @dataclass
@@ -180,6 +186,10 @@ class Config:
             errors.append("risk.cooldown_bars_after_loss must be >= 0")
         if r.time_stop_bars < 0:
             errors.append("risk.time_stop_bars must be >= 0")
+        if r.atr_period < 2:
+            errors.append("risk.atr_period must be >= 2")
+        if r.atr_stop_multiplier <= 0:
+            errors.append("risk.atr_stop_multiplier must be > 0")
 
         if self.trading.mode == "live":
             if not self.secrets.get("api_key") or not self.secrets.get("api_secret"):

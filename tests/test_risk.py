@@ -84,6 +84,85 @@ def test_size_enforces_stop_below_entry_below_tp():
     assert result.stop_loss < 100.0 < result.take_profit
 
 
+def test_size_rejects_when_tp_does_not_cover_costs():
+    # tp_pct = 0.001 is smaller than a single-leg fee, let alone round trip.
+    rm = RiskManager(
+        _cfg(
+            take_profit_pct=0.001,
+            stop_loss_pct=0.02,
+            taker_fee_pct=0.005,
+            slippage_pct=0.0,
+            min_reward_to_risk=1.0,
+        )
+    )
+    result = rm.size("long", price=100.0, equity=500.0, cash=500.0)
+    assert result.amount == 0.0
+    assert "cost" in result.reason.lower() or "r:r" in result.reason.lower()
+
+
+def test_size_cost_aware_tightens_rr_threshold():
+    # Without fees gross r:r = 2.0; min=1.6 should pass.
+    lenient = RiskManager(
+        _cfg(
+            stop_loss_pct=0.02,
+            take_profit_pct=0.04,
+            taker_fee_pct=0.0,
+            slippage_pct=0.0,
+            min_reward_to_risk=1.6,
+        )
+    )
+    assert lenient.size("long", 100.0, 500.0, 500.0).amount > 0
+
+    # Add enough cost that net r:r falls below 1.6.
+    strict = RiskManager(
+        _cfg(
+            stop_loss_pct=0.02,
+            take_profit_pct=0.04,
+            taker_fee_pct=0.005,
+            slippage_pct=0.0,
+            min_reward_to_risk=1.6,
+        )
+    )
+    assert strict.size("long", 100.0, 500.0, 500.0).amount == 0.0
+
+
+def test_atr_stop_uses_volatility_distance():
+    rm = RiskManager(
+        _cfg(
+            stop_loss_pct=0.05,
+            take_profit_pct=0.10,
+            taker_fee_pct=0.0,
+            slippage_pct=0.0,
+            use_atr_stop=True,
+            atr_stop_multiplier=2.0,
+        )
+    )
+    atr = 1.5  # absolute price units
+    result = rm.size("long", price=100.0, equity=1000.0, cash=1000.0, atr=atr)
+    # Stop sits atr * multiplier below entry, not price * stop_pct below.
+    assert abs((100.0 - result.stop_loss) - 3.0) < 1e-9
+    # TP preserves the tp:sl ratio from config (10%/5% = 2x).
+    assert abs((result.take_profit - 100.0) - 6.0) < 1e-9
+
+
+def test_atr_mode_scales_size_inversely_with_volatility():
+    rm = RiskManager(
+        _cfg(
+            risk_per_trade=0.02,
+            max_position_pct=1.0,
+            stop_loss_pct=0.05,
+            take_profit_pct=0.10,
+            taker_fee_pct=0.0,
+            slippage_pct=0.0,
+            use_atr_stop=True,
+            atr_stop_multiplier=2.0,
+        )
+    )
+    calm = rm.size("long", 100.0, 1000.0, 1000.0, atr=0.5)
+    noisy = rm.size("long", 100.0, 1000.0, 1000.0, atr=2.0)
+    assert calm.amount > noisy.amount > 0
+
+
 def test_trailing_stop_ratchets_up():
     pos = Position(
         symbol="BTC/GBP",

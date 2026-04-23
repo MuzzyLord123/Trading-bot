@@ -53,25 +53,47 @@ class RiskManager:
         equity: float,
         cash: float,
         portfolio: Portfolio | None = None,
+        atr: float | None = None,
     ) -> SizingResult:
         """Fixed-fractional sizing based on stop distance. Long-only for now.
 
-        Rejects trades whose reward:risk ratio is below ``min_reward_to_risk``.
+        When ``cfg.use_atr_stop`` is enabled and ``atr`` is supplied, the stop
+        distance is ``atr * atr_stop_multiplier`` instead of a fixed percentage,
+        adapting position size to realised volatility.
+
+        Rejects trades whose reward:risk ratio (net of round-trip fees and
+        slippage) is below ``min_reward_to_risk``.
         """
         stop_pct = self.cfg.stop_loss_pct
         if stop_pct <= 0 or stop_pct >= 1 or price <= 0 or side != "long":
             return SizingResult(0.0, 0.0, 0.0, "invalid inputs")
 
-        if self.cfg.take_profit_pct > 0 and self.cfg.min_reward_to_risk > 0:
-            rr = self.cfg.take_profit_pct / stop_pct
+        tp_pct = self.cfg.take_profit_pct
+
+        # Resolve absolute stop/target distances. In ATR mode the absolute
+        # distance scales with volatility while preserving the tp:sl ratio
+        # implied by the config.
+        if self.cfg.use_atr_stop and atr is not None and atr > 0:
+            stop_distance = atr * self.cfg.atr_stop_multiplier
+            tp_distance = stop_distance * (tp_pct / stop_pct) if tp_pct > 0 else 0.0
+        else:
+            stop_distance = price * stop_pct
+            tp_distance = price * tp_pct if tp_pct > 0 else 0.0
+
+        if tp_pct > 0 and self.cfg.min_reward_to_risk > 0:
+            cost_cash = price * 2 * (self.cfg.taker_fee_pct + self.cfg.slippage_pct)
+            net_reward = tp_distance - cost_cash
+            net_risk = stop_distance + cost_cash
+            if net_reward <= 0:
+                return SizingResult(0.0, 0.0, 0.0, "tp does not cover costs")
+            rr = net_reward / net_risk if net_risk > 0 else 0.0
             if rr < self.cfg.min_reward_to_risk:
-                return SizingResult(0.0, 0.0, 0.0, f"r:r {rr:.2f} below min")
+                return SizingResult(0.0, 0.0, 0.0, f"net r:r {rr:.2f} below min")
 
         risk_pct = (
             self._effective_risk_pct(portfolio, equity) if portfolio else self.cfg.risk_per_trade
         )
         risk_cash = equity * risk_pct
-        stop_distance = price * stop_pct
         amount = risk_cash / stop_distance if stop_distance > 0 else 0.0
 
         max_notional = min(equity * self.cfg.max_position_pct, cash)
@@ -81,10 +103,10 @@ class RiskManager:
         if amount <= 0:
             return SizingResult(0.0, 0.0, 0.0, "sized to zero")
 
-        stop = price * (1 - stop_pct)
-        tp = price * (1 + self.cfg.take_profit_pct) if self.cfg.take_profit_pct > 0 else 0.0
+        stop = price - stop_distance
+        tp = price + tp_distance if tp_distance > 0 else 0.0
         # Invariant for long entries: stop < entry < take_profit (if TP is set).
-        if stop >= price or (tp > 0 and tp <= price):
+        if stop >= price or stop <= 0 or (tp > 0 and tp <= price):
             return SizingResult(0.0, 0.0, 0.0, "invalid stop/target ordering")
         return SizingResult(amount=amount, stop_loss=stop, take_profit=tp)
 

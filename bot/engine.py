@@ -125,7 +125,7 @@ class TradingEngine:
             except Exception as exc:
                 log.warning("news scan failed: %s", exc)
             for signal in news_signals:
-                self._handle_news(signal, prices)
+                self._handle_news(signal, prices, candles)
 
         for symbol in list(self._cooldown_ticks_left.keys()):
             self._cooldown_ticks_left[symbol] -= 1
@@ -166,7 +166,7 @@ class TradingEngine:
                         continue
                     if self._in_news_blackout(symbol):
                         continue
-                    self._open(symbol, prices[symbol], equity)
+                    self._open(symbol, prices[symbol], equity, df)
 
         self.equity_log.write(
             {
@@ -178,9 +178,11 @@ class TradingEngine:
         )
         self._render_status(equity, prices)
 
-    def _open(self, symbol: str, price: float, equity: float) -> None:
+    def _open(self, symbol: str, price: float, equity: float, candles=None) -> None:
+        atr_value = self._atr_value(candles) if self.cfg.risk.use_atr_stop else None
         sizing = self.risk.size(
-            "long", price, equity, self.portfolio.cash, portfolio=self.portfolio
+            "long", price, equity, self.portfolio.cash,
+            portfolio=self.portfolio, atr=atr_value,
         )
         if sizing.amount <= 0:
             return
@@ -287,7 +289,9 @@ class TradingEngine:
         until = self._news_blackout_until.get(symbol)
         return until is not None and time.time() < until
 
-    def _handle_news(self, signal: NewsSignal, prices: dict[str, float]) -> None:
+    def _handle_news(
+        self, signal: NewsSignal, prices: dict[str, float], candles: dict | None = None
+    ) -> None:
         if signal.symbol not in self.cfg.trading.symbols:
             log.debug("news symbol %s not in trading universe, ignoring", signal.symbol)
             return
@@ -321,7 +325,23 @@ class TradingEngine:
         if signal.symbol in self._cooldown_ticks_left:
             return
         equity = self.portfolio.equity(prices)
-        self._open(signal.symbol, price, equity)
+        df = candles.get(signal.symbol) if candles else None
+        self._open(signal.symbol, price, equity, df)
+
+    def _atr_value(self, candles) -> float | None:
+        """Last finite ATR reading, or None if unavailable."""
+        if candles is None or getattr(candles, "empty", True):
+            return None
+        try:
+            from .indicators import atr as _atr
+            series = _atr(candles, self.cfg.risk.atr_period).dropna()
+        except Exception as exc:
+            log.debug("atr calculation failed: %s", exc)
+            return None
+        if series.empty:
+            return None
+        value = float(series.iloc[-1])
+        return value if math.isfinite(value) and value > 0 else None
 
     def _render_status(self, equity: float, prices: dict[str, float]) -> None:
         table = Table(title=f"{self.cfg.trading.mode.upper()} snapshot")

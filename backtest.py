@@ -18,7 +18,9 @@ from bot.logger import console, setup_logging
               help="How many days of history to replay.")
 @click.option("--no-csv", is_flag=True, default=False,
               help="Skip writing reports/ CSVs.")
-def main(config_path: str, days: int, no_csv: bool) -> None:
+@click.option("--windows", type=int, default=4, show_default=True,
+              help="Number of equal-sized windows for stability stats (0 to skip).")
+def main(config_path: str, days: int, no_csv: bool, windows: int) -> None:
     cfg = Config.load(config_path)
     setup_logging(cfg.logging.level)
     bt = build_backtester(cfg)
@@ -31,6 +33,18 @@ def main(config_path: str, days: int, no_csv: bool) -> None:
     for key, value in stats.items():
         table.add_row(key, str(value))
     console().print(table)
+
+    if windows > 0:
+        per_window = result.window_stats(n_windows=windows)
+        if per_window:
+            wtable = Table(title=f"Stability: {windows} equal windows")
+            for col in ("window", "start", "end", "return_pct", "max_drawdown_pct", "sharpe"):
+                wtable.add_column(col)
+            for row in per_window:
+                wtable.add_row(*[str(row[c]) for c in
+                                 ("window", "start", "end", "return_pct", "max_drawdown_pct", "sharpe")])
+            console().print(wtable)
+
     console().print(json.dumps(stats, indent=2))
 
 
