@@ -150,6 +150,9 @@ strategy:
     news_gap_threshold: 0.05
 
   # Indicator periods tuned for hourly stock bars.
+  # Any strategy listed in `ensemble.members` can have its params tuned
+  # here. Registered names: ma_crossover, rsi_reversion, macd, bollinger,
+  # stochastic, donchian, keltner, cci, obv_trend.
   params:
     ma_crossover:
       fast: 8
@@ -165,6 +168,27 @@ strategy:
     bollinger:
       period: 15
       std: 2.0
+    stochastic:
+      k_period: 14
+      d_period: 3
+      smooth: 3
+      oversold: 20
+      overbought: 80
+    donchian:
+      period: 20
+      exit_period: 10
+    keltner:
+      period: 20
+      multiplier: 2.0
+      atr_period: 10
+    cci:
+      period: 20
+      entry_level: -100
+      exit_level: 100
+    obv_trend:
+      ema_period: 20
+      lookback: 5
+      trend_ema: 50
 
 logging:
   level: INFO

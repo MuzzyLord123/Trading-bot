@@ -4,17 +4,27 @@ from typing import Any
 
 from .base import Signal, Strategy, StrategyContext
 from .bollinger import BollingerStrategy
+from .cci import CciStrategy
+from .donchian import DonchianStrategy
 from .ensemble import EnsembleStrategy
 from .filtered import FilteredStrategy
+from .keltner import KeltnerStrategy
 from .ma_crossover import MaCrossoverStrategy
 from .macd import MacdStrategy
+from .obv_trend import ObvTrendStrategy
 from .rsi_reversion import RsiReversionStrategy
+from .stochastic import StochasticStrategy
 
 _REGISTRY: dict[str, type[Strategy]] = {
     "ma_crossover": MaCrossoverStrategy,
     "rsi_reversion": RsiReversionStrategy,
     "macd": MacdStrategy,
     "bollinger": BollingerStrategy,
+    "stochastic": StochasticStrategy,
+    "donchian": DonchianStrategy,
+    "keltner": KeltnerStrategy,
+    "cci": CciStrategy,
+    "obv_trend": ObvTrendStrategy,
     "ensemble": EnsembleStrategy,
 }
 
@@ -88,6 +98,11 @@ __all__ = [
     "RsiReversionStrategy",
     "MacdStrategy",
     "BollingerStrategy",
+    "StochasticStrategy",
+    "DonchianStrategy",
+    "KeltnerStrategy",
+    "CciStrategy",
+    "ObvTrendStrategy",
     "EnsembleStrategy",
     "FilteredStrategy",
 ]

@@ -156,3 +156,74 @@ def adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
 
     dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0.0, np.nan)
     return dx.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+
+
+def stochastic(
+    df: pd.DataFrame, k_period: int = 14, d_period: int = 3, smooth: int = 3
+) -> pd.DataFrame:
+    """Stochastic oscillator (%K / %D) in [0, 100].
+
+    Measures where the current close sits within the recent high/low range.
+    %K > 80 = near top of range (overbought); %K < 20 = near bottom (oversold).
+    %D is an SMA of %K used as a signal line.
+    """
+    low_n = df["low"].rolling(k_period, min_periods=k_period).min()
+    high_n = df["high"].rolling(k_period, min_periods=k_period).max()
+    span = (high_n - low_n).replace(0.0, np.nan)
+    raw_k = 100 * (df["close"] - low_n) / span
+    k = raw_k.rolling(smooth, min_periods=smooth).mean()
+    d = k.rolling(d_period, min_periods=d_period).mean()
+    return pd.DataFrame({"k": k, "d": d})
+
+
+def donchian(df: pd.DataFrame, period: int = 20) -> pd.DataFrame:
+    """Donchian channel: highest high and lowest low over ``period`` bars.
+
+    Breakouts above the upper band are a classic trend-following entry; the
+    lower band is the mirrored exit / short trigger.
+    """
+    upper = df["high"].rolling(period, min_periods=period).max()
+    lower = df["low"].rolling(period, min_periods=period).min()
+    mid = (upper + lower) / 2
+    return pd.DataFrame({"upper": upper, "lower": lower, "mid": mid})
+
+
+def keltner(
+    df: pd.DataFrame, period: int = 20, multiplier: float = 2.0, atr_period: int = 10
+) -> pd.DataFrame:
+    """Keltner channel: EMA of close plus/minus ``multiplier`` * ATR.
+
+    Tighter than Bollinger bands in trending markets because volatility is
+    measured from true range rather than stdev. A close outside the channel
+    is a strong-trend signal rather than a mean-reversion cue.
+    """
+    mid = ema(df["close"], period)
+    atr_ = atr(df, atr_period)
+    upper = mid + multiplier * atr_
+    lower = mid - multiplier * atr_
+    return pd.DataFrame({"upper": upper, "lower": lower, "mid": mid})
+
+
+def cci(df: pd.DataFrame, period: int = 20) -> pd.Series:
+    """Commodity Channel Index: how far the typical price has deviated from
+    its rolling mean, scaled by mean deviation. Unbounded but most readings
+    sit in [-200, +200]. Crosses above +100 often mark strong uptrends;
+    crosses below -100 mark strong downtrends.
+    """
+    typical = (df["high"] + df["low"] + df["close"]) / 3
+    ma = typical.rolling(period, min_periods=period).mean()
+    mad = typical.rolling(period, min_periods=period).apply(
+        lambda x: np.mean(np.abs(x - x.mean())), raw=True
+    )
+    denom = (0.015 * mad).replace(0.0, np.nan)
+    return (typical - ma) / denom
+
+
+def obv(df: pd.DataFrame) -> pd.Series:
+    """On-Balance Volume: cumulative volume, signed by the direction of the
+    close. Rising OBV confirms an uptrend (volume flowing in); divergence
+    against price is a classic warning that a trend is weakening.
+    """
+    direction = np.sign(df["close"].diff()).fillna(0.0)
+    return (direction * df["volume"]).cumsum()
+
