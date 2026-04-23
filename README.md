@@ -26,27 +26,43 @@ so it works against 100+ exchanges.
 ## Requirements
 
 - **Python 3.10 or newer** on every supported platform.
+  - **macOS**: Python 3 is *not* preinstalled. Install via
+    [Homebrew](https://brew.sh) with `brew install python`, or grab the
+    `.pkg` from [python.org/downloads/macos/](https://www.python.org/downloads/macos/).
+  - **Linux**: install `python3` and `python3-venv` through your package
+    manager (e.g. `sudo apt install python3 python3-venv`).
+  - **Windows**: install from [python.org/downloads/windows/](https://www.python.org/downloads/windows/)
+    and tick *"Add python.exe to PATH"* on the first installer screen.
 - Git (to clone the repo).
 - ~200 MB of disk for the virtualenv and cached market data.
 
 Check your version:
 
 ```bash
-python --version   # macOS / Linux
-py --version       # Windows (py launcher)
+python3 --version   # macOS / Linux
+py --version        # Windows (py launcher)
 ```
 
-If `python` isn't found on your PATH, try `python3` (macOS/Linux) or `py`
-(Windows). All commands below use `python`; substitute as needed.
+Most macOS and Linux systems expose the interpreter as **`python3`**, not
+`python` — use whichever one responds to `--version`. Once the virtualenv
+is activated (step 2 below) plain `python` works inside it on all
+platforms.
 
 ## Quick start
 
-Pick the block that matches your platform. All three do the same thing.
+> **Do these from inside the cloned repo**, not your home directory. If
+> you haven't cloned yet:
+> ```bash
+> git clone <repo-url>
+> cd trading-bot
+> ```
+
+Then pick the block that matches your platform.
 
 ### macOS / Linux (bash or zsh)
 
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
