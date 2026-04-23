@@ -14,7 +14,7 @@ from bot.config import (
 
 
 def _make(**overrides) -> Config:
-    trading = overrides.pop("trading", TradingConfig(mode="paper", symbols=["BTC/GBP"]))
+    trading = overrides.pop("trading", TradingConfig(mode="paper", symbols=["VUAG.L"]))
     risk = overrides.pop("risk", RiskConfig())
     return Config(
         exchange=overrides.pop("exchange", ExchangeConfig()),
@@ -38,7 +38,7 @@ def test_validate_rejects_empty_symbols():
 
 
 def test_validate_rejects_bad_mode():
-    cfg = _make(trading=TradingConfig(mode="shadow", symbols=["BTC/GBP"]))
+    cfg = _make(trading=TradingConfig(mode="shadow", symbols=["VUAG.L"]))
     with pytest.raises(ValueError, match="trading.mode"):
         cfg.validate()
 
@@ -56,14 +56,14 @@ def test_validate_rejects_zero_max_open_positions():
 
 
 def test_validate_requires_secrets_in_live_mode():
-    cfg = _make(trading=TradingConfig(mode="live", symbols=["BTC/GBP"]), secrets={})
-    with pytest.raises(ValueError, match="EXCHANGE_API_KEY"):
+    cfg = _make(trading=TradingConfig(mode="live", symbols=["VUAG.L"]), secrets={})
+    with pytest.raises(ValueError, match="TRADING212_API_KEY"):
         cfg.validate()
 
 
 def test_validate_live_mode_ok_with_secrets():
     cfg = _make(
-        trading=TradingConfig(mode="live", symbols=["BTC/GBP"]),
-        secrets={"api_key": "k", "api_secret": "s"},
+        trading=TradingConfig(mode="live", symbols=["VUAG.L"]),
+        secrets={"trading212_api_key": "k"},
     )
     cfg.validate()

@@ -36,12 +36,12 @@ def _synthetic_data(n: int = 400) -> pd.DataFrame:
 
 def _cfg() -> Config:
     return Config(
-        exchange=ExchangeConfig(name="kraken"),
+        exchange=ExchangeConfig(name="trading212"),
         trading=TradingConfig(
             mode="paper",
             quote_currency="GBP",
             starting_capital=500.0,
-            symbols=["BTC/GBP"],
+            symbols=["VUAG.L"],
             timeframe="1h",
             history_candles=400,
         ),
@@ -68,7 +68,7 @@ def test_backtest_runs_on_synthetic_uptrend():
     cfg = _cfg()
     strat = MaCrossoverStrategy(fast=10, slow=30)
     bt = Backtester(cfg, exchange=None, strategy=strat, risk=RiskManager(cfg.risk))
-    data = {"BTC/GBP": _synthetic_data(400)}
+    data = {"VUAG.L": _synthetic_data(400)}
     result = bt.run(data=data, write_csv=False)
     stats = result.stats(cfg.trading.starting_capital)
     assert "total_return_pct" in stats

@@ -36,7 +36,7 @@ def _cfg(**overrides):
 
 def _pos(entry: float = 100.0, stop: float = 97.0, tp: float = 106.0) -> Position:
     return Position(
-        symbol="BTC/GBP",
+        symbol="VUAG.L",
         side="long",
         amount=1.0,
         entry_price=entry,

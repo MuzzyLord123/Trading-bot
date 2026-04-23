@@ -1,8 +1,9 @@
-# Advanced Trading Bot
+# Trading 212 Stock Bot
 
-A configurable, multi-strategy crypto trading bot with backtesting, paper
-trading, and live trading support. Built on [ccxt](https://github.com/ccxt/ccxt)
-so it works against 100+ exchanges.
+A configurable, multi-strategy stock-trading bot for
+[Trading 212 Invest](https://www.trading212.com). Uses Yahoo Finance for
+historical candles and the Trading 212 REST API for live execution. Supports
+backtesting, paper trading, and live trading.
 
 > **Risk warning**: Trading is high risk. You can lose all your capital. This
 > software is provided as-is with no warranty. Start with paper trading and
@@ -12,15 +13,21 @@ so it works against 100+ exchanges.
 
 - **Multi-strategy engine**: MA crossover, RSI mean reversion, MACD,
   Bollinger bands, and an ensemble voter that combines them.
-- **Risk management first**: volatility-aware position sizing, per-trade
-  stop-loss and take-profit, trailing stops, daily loss limit, and a global
-  max-drawdown kill switch.
+- **Regime filters**: trend / ADX / ATR / volume / earnings-blackout gates
+  that only allow entries in favourable conditions.
+- **Risk management first**: volatility-aware (ATR) position sizing,
+  per-trade stop-loss and take-profit, trailing stops, scale-out at
+  R-multiple, daily loss limit, consecutive-loss circuit breaker, and a
+  global max-drawdown kill switch.
 - **Three run modes**:
-  - `backtest` – replay historical candles, produce performance stats.
+  - `backtest` – replay yfinance history, produce performance stats and
+    walk-forward out-of-sample reports.
   - `paper` – live prices, simulated fills, no real money.
-  - `live` – real orders via the exchange API.
-- **Exchange agnostic** via ccxt (Kraken, Binance, Coinbase, Bybit, …).
-- **Structured logging** of every trade and equity snapshot to CSV.
+  - `live` – real orders via the Trading 212 REST API.
+- **Large universes**: symbols can include `SP500` / `NASDAQ100` tokens
+  that auto-expand, or any yfinance-recognised ticker (`VUAG.L`, `AAPL`, …).
+- **Structured logging** of every trade, MFE/MAE, and equity snapshot to CSV.
+- **Streamlit dashboard** for monitoring and config editing.
 - **Configuration by YAML** – no code changes needed to retune.
 
 ## Requirements
@@ -143,9 +150,12 @@ normalises them to backslashes on Windows automatically.
 ## Safety defaults
 
 - `trading.mode` defaults to `paper`. Live trading requires an explicit
-  config change **and** the presence of API credentials in `.env`.
+  config change **and** `TRADING212_API_KEY` in `.env`.
 - Live mode prompts for confirmation on startup.
-- A daily loss limit and a global max drawdown automatically halt trading.
+- A daily loss limit, consecutive-loss circuit breaker and a global
+  max-drawdown kill switch automatically halt trading.
+- The bot only runs during US / LSE market hours (07:00-21:00 UTC); ticks
+  outside that window are skipped.
 
 ## Project layout
 
@@ -193,14 +203,18 @@ registering the name in `bot/strategies/__init__.py`.
 
 ## Going live – the sensible path
 
-1. Backtest over at least 6 months. Check the stats (Sharpe, max drawdown,
-   win rate). If drawdown is greater than you can stomach, re-tune.
-2. Paper trade for at least a week. Verify the bot's behaviour matches
+1. Backtest over at least 6 months. Check the stats (Sharpe, Sortino,
+   Calmar, max drawdown, expectancy). If drawdown is greater than you can
+   stomach, re-tune.
+2. Run `python backtest.py --days 365 --walk-forward 4` and check that
+   returns aren't concentrated in one window – that signals overfit.
+3. Paper trade for at least a week. Verify the bot's behaviour matches
    expectations on live prices.
-3. Create an exchange API key with **trade** permissions but **no
-   withdrawal** permissions. Set IP allowlisting if your exchange
-   supports it.
-4. Put your credentials in `.env`, set `trading.mode: live`, start small.
+4. In the Trading 212 app: **Settings → API → Generate new key**. Approval
+   takes a few days. A demo key is available for `demo.trading212.com` if
+   you want to rehearse live mode without real money first.
+5. Put `TRADING212_API_KEY` in `.env`, set `trading.mode: live` and start
+   with a small `starting_capital` or fewer symbols.
 
 ## Platform notes
 

@@ -1,4 +1,8 @@
-"""Pick the right exchange/broker adapter based on config."""
+"""Adapter factory.
+
+This bot is Trading 212 only, so the factory is a thin constructor.
+Kept as a separate module to avoid import cycles between config and stocks.
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -6,18 +10,12 @@ from typing import Any
 from .config import Config
 
 
-# Platforms routed through the stocks (yfinance + Trading 212) stack.
-_STOCK_PLATFORMS = {"trading212", "trading_212", "t212"}
+def build_exchange(cfg: Config) -> Any:
+    """Return the Trading 212 / yfinance adapter configured by ``cfg``."""
+    from .stocks import StocksExchange
+    return StocksExchange(cfg)
 
 
 def is_stock_platform(cfg: Config) -> bool:
-    return cfg.exchange.name.lower() in _STOCK_PLATFORMS
-
-
-def build_exchange(cfg: Config) -> Any:
-    """Return a ccxt-backed Exchange or a StocksExchange, matching cfg."""
-    if is_stock_platform(cfg):
-        from .stocks import StocksExchange
-        return StocksExchange(cfg)
-    from .exchange import Exchange
-    return Exchange(cfg)
+    """Back-compat shim – this bot only trades stocks, always True."""
+    return True

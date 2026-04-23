@@ -1,92 +1,108 @@
 # ============================================================================
-# Advanced Trading Bot - Configuration
-# Copy to config.yaml and tune to taste. config.yaml is gitignored.
+# Trading 212 Invest (UK stocks & ETFs) - example config
 #
-# Settings below are the most profitable combo found on REAL Kraken hourly
-# data (not synthetic). On the 365-day backtest this was:
-#   strategy: ensemble (all 4 members, min_agreement=2, min_score=1.5)
-#   filter: trend_ema=100, min_adx=15, no HTF/supertrend/volume gates
-#   risk_per_trade: 3% (was 1% in original test — scaled up for better returns)
-# Previous runs with looser filters or MACD-solo underperformed this on
-# real data. Further tuning without real walk-forward testing risks
-# overfitting.
+# Copy to config.yaml and tune. Assumes:
+#   * You have Trading 212 API access (request from Settings -> API in app)
+#   * TRADING212_API_KEY is set in .env
+#   * You intend to trade stocks/ETFs, not CFDs
+#
+# Data: Yahoo Finance (free, no auth). Execution: Trading 212 REST.
+# Backtest uses yfinance too — no historical data from T212.
 # ============================================================================
 
 exchange:
-  name: kraken
+  name: trading212
   requires_password: false
+  # sandbox: true -> uses demo.trading212.com (set a demo API key in .env).
   sandbox: false
   enable_rate_limit: true
 
 trading:
-  # 'paper' simulates fills against real prices, 'live' sends real orders.
-  # Always start on paper. Switch to live only once you trust the behaviour.
+  # Always start on paper. Switch to 'live' only after a month of clean paper runs.
   mode: paper
 
   quote_currency: GBP
-  starting_capital: 500.0
 
-  # More symbols = more shots on goal. List Kraken GBP pairs with:
-  #   python -c "import ccxt; k=ccxt.kraken(); k.load_markets(); print([s for s in k.symbols if s.endswith('/GBP')])"
+  # Your account size. Used for paper/backtest sizing; live uses real balance.
+  starting_capital: 33000.0
+
+  # Yahoo Finance tickers. Use ".L" suffix for LSE listings, plain for US.
+  # Special tokens auto-expand (deduplicated where they overlap):
+  #   SP500     -> ~500 S&P 500 constituents
+  #   NASDAQ100 -> ~100 largest Nasdaq non-financials (tech-heavy)
+  # The union of SP500 + NASDAQ100 = ~530 unique US large caps.
   symbols:
-    - BTC/GBP
-    - ETH/GBP
-    - SOL/GBP
-    - ADA/GBP
-    - DOT/GBP
-    - XRP/GBP
-    - LINK/GBP
-    - LTC/GBP
+    - VWRL.L        # Vanguard FTSE All-World (global equity)
+    - VUAG.L        # Vanguard S&P 500 (accumulating)
+    - SP500
+    - NASDAQ100
 
+  # Hourly stock bars. ~6-7 bars per trading day per stock = 6-7x more
+  # signal opportunities than daily. WARNING: intraday data is noisier;
+  # win rate typically drops 5-15% vs daily. This config is optimised
+  # for TRADE COUNT, not win rate.
   timeframe: 1h
-  poll_interval_seconds: 60
-  history_candles: 500
+
+  # Between ticks in live mode. Hourly bars close every hour, so polling
+  # every 5 min is plenty.
+  poll_interval_seconds: 300
+
+  history_candles: 1000   # ~30 weeks of hourly bars (yfinance caps 60m at 730d)
 
 risk:
-  # 3% per trade. At 1% previously = £4/year; at 3% expect ~£10-25/year.
-  # Higher risk isn't worth it — past 3% the fat-tail risk of a single
-  # bad trade or flash crash dominates expected return.
-  risk_per_trade: 0.03
+  # 1% per trade is the default for accounts of this size. 1% of £33k = £330
+  # per losing trade. 10 losers in a row = -10% equity (£3,300). Historically
+  # survivable with this strategy.
+  risk_per_trade: 0.01
 
-  # Max fraction of equity any single position can consume.
-  max_position_pct: 0.5
+  # Max single position as a fraction of equity. 7% = ~£2,300 per stock.
+  # Lower than before to fit more concurrent positions without over-deploying.
+  max_position_pct: 0.07
 
-  # Max simultaneous open positions.
-  max_open_positions: 4
+  # Max simultaneous open positions across all symbols.
+  # 15 on hourly bars = faster turnover = more trades/year.
+  max_open_positions: 15
 
-  # Hard stop-loss as a fraction of entry price.
-  stop_loss_pct: 0.03
+  # Stops sized for daily-bar stock volatility (smaller than crypto hourly).
+  stop_loss_pct: 0.04
+  take_profit_pct: 0.10     # 2.5:1 R:R
 
-  # Take-profit as a fraction of entry price. 2:1 reward:risk.
-  take_profit_pct: 0.06
+  trailing_stop_pct: 0.03
 
-  # Trailing stop distance as a fraction of peak price since entry.
-  trailing_stop_pct: 0.02
+  # Halt trading after -3% from start-of-day equity.
+  daily_loss_limit_pct: 0.03
 
-  # Stop trading for the day after this drawdown from start-of-day equity.
-  daily_loss_limit_pct: 0.08
+  # Hard kill switch: stop entirely if total drawdown from peak > 15%.
+  # On £33k that's a £4,950 drawdown. Restart manually after reviewing.
+  max_drawdown_pct: 0.15
 
-  # Global kill switch. DO NOT REMOVE — protects against flash crashes.
-  max_drawdown_pct: 0.30
-
-  taker_fee_pct: 0.0026
+  # Trading 212 Invest is £0 commission on stocks/ETFs. Spread is the cost.
+  # Rough spread for liquid names ~0.05-0.10%; FX spread on US stocks ~0.15%
+  # one-way. Combine conservatively.
+  taker_fee_pct: 0.0015
   slippage_pct: 0.0005
 
-  cooldown_bars_after_loss: 8
-  min_reward_to_risk: 1.5
-  breakeven_trigger_pct: 0.015
-  time_stop_bars: 36
+  # Bars to wait before re-entering a symbol after a losing exit.
+  # On hourly bars, 2 = 2 hours. Fast re-entry for more trade volume.
+  cooldown_bars_after_loss: 2
 
-  drawdown_risk_reduction_threshold: 0.08
+  min_reward_to_risk: 1.5
+  breakeven_trigger_pct: 0.02
+  # Close a flat position after 24 hours of trading (~4 days).
+  time_stop_bars: 24
+
+  drawdown_risk_reduction_threshold: 0.05
   drawdown_risk_reduction_factor: 0.5
 
 strategy:
-  # Ensemble beat MACD-solo on real Kraken data (60% vs 36% WR).
+  # Ensemble proved best on real data; keep it.
   name: ensemble
 
   ensemble:
-    min_agreement: 2
-    min_score: 1.5
+    min_agreement: 1
+    # Was 0.8. Lowered further to 0.5 — any member with weight >= 0.5
+    # triggers an entry on its own. All members now qualify.
+    min_score: 0.5
     members:
       - ma_crossover
       - rsi_reversion
@@ -98,48 +114,48 @@ strategy:
       rsi_reversion: 1.0
       bollinger: 0.8
 
-  # Filter config that produced 60% win rate on real Kraken.
+  # Regime filters DRAMATICALLY LOOSENED to hit high trade count.
+  # Target: 300-600 trades/year. Win rate will likely drop vs the
+  # daily-bar config that achieved 61% on 13 trades.
   filter:
     enabled: true
-    trend_ema: 100
-    require_uptrend: true
-    min_adx: 15
+    # Uptrend requirement DISABLED — on hourly bars, 30-period EMA is
+    # just 30 hours (~5 days), and most S&P 500 names are above it most
+    # of the time anyway. Filter was adding little.
+    trend_ema: 30
+    require_uptrend: false
+    min_adx: 0               # ADX disabled on hourly — too noisy to use
     adx_period: 14
-    min_atr_pct: 0.0005
+    min_atr_pct: 0.001       # loose – only excludes truly dead stocks
     atr_period: 14
-    # Extra gates left disabled — they helped on synthetic, hurt on real.
     htf_rule: null
-    htf_ema: 50
+    htf_ema: 20
     use_supertrend: false
     supertrend_period: 10
     supertrend_multiplier: 3.0
     volume_mult: 0
     volume_period: 20
 
-    # Crypto Fear & Greed index filter (free API from alternative.me).
-    # When enabled, only takes entries when F&G is in [fng_min, fng_max].
-    # Idea: skip entries during extreme greed (pump exhaustion) and extreme
-    # fear (catching falling knives). Expected impact: small — maybe raises
-    # win rate 2-5%, cuts trade count 20-30%. Set fng_enabled=true to try.
-    fng_enabled: true
-    fng_min: 25
-    fng_max: 80
-    fng_days: 400
+    # Defensive news gates – cheap to keep on, they filter very few trades
+    # but dodge the biggest event-driven disasters.
+    earnings_blackout_days: 2
+    news_gap_threshold: 0.05
 
+  # Indicator periods tuned for hourly stock bars.
   params:
     ma_crossover:
-      fast: 20
-      slow: 50
+      fast: 8
+      slow: 21
     rsi_reversion:
-      period: 14
+      period: 10
       oversold: 30
       overbought: 70
     macd:
-      fast: 12
-      slow: 26
-      signal: 9
+      fast: 8
+      slow: 21
+      signal: 5
     bollinger:
-      period: 20
+      period: 15
       std: 2.0
 
 logging:
@@ -149,27 +165,3 @@ logging:
 
 notifications:
   telegram: false
-
-# ---------------------------------------------------------------------------
-# News feed (LIVE MODE ONLY — backtest ignores this)
-# ---------------------------------------------------------------------------
-# Reads RSS from CoinDesk, Cointelegraph, Decrypt. Classifies headlines by
-# keyword. When a major news item matches a traded symbol, the engine acts.
-#
-# Modes:
-#   defensive  – only CLOSE positions on bad news. Safe, no new entries from news.
-#   aggressive – ALSO open positions on good news (risky — news is already priced
-#                in by the time free feeds publish; you are buying after the pop).
-#
-# Disabled by default. Turn on after you've paper-traded and trust the bot.
-news:
-  enabled: false
-  mode: defensive
-  # Classification score threshold for "major" news. Lower = more triggers.
-  # Single strong keyword (hack, approval) scores ~6; threshold 5 means
-  # those fire reliably while minor mentions are ignored.
-  major_threshold: 5.0
-  # Ignore stories older than this many minutes (stale news).
-  max_age_minutes: 120
-  # After a bad-news close, block new entries on that symbol for N seconds.
-  blackout_seconds: 14400   # 4 hours

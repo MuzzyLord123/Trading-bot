@@ -32,7 +32,6 @@ import yaml
 ROOT = Path(__file__).parent
 CONFIG_PATH = ROOT / "config.yaml"
 CONFIG_EXAMPLE_PATH = ROOT / "config.example.yaml"
-STOCKS_EXAMPLE_PATH = ROOT / "config.stocks.example.yaml"
 ENV_PATH = ROOT / ".env"
 TRADES_PATH = ROOT / "logs" / "trades.csv"
 EQUITY_PATH = ROOT / "logs" / "equity.csv"
@@ -42,9 +41,6 @@ BACKTEST_LOG = ROOT / "reports" / "last_backtest.log"
 
 API_KEY_FIELDS = [
     ("TRADING212_API_KEY", "Trading 212 API key"),
-    ("EXCHANGE_API_KEY", "Crypto exchange API key"),
-    ("EXCHANGE_API_SECRET", "Crypto exchange API secret"),
-    ("EXCHANGE_API_PASSWORD", "Crypto exchange API password"),
     ("TELEGRAM_BOT_TOKEN", "Telegram bot token"),
     ("TELEGRAM_CHAT_ID", "Telegram chat ID"),
 ]
@@ -443,8 +439,7 @@ def _run_backtest_subprocess(days: int = 365) -> tuple[bool, str]:
 with tabs[2]:
     if not cfg:
         st.error(
-            "No config.yaml found. Copy config.example.yaml (crypto) or "
-            "config.stocks.example.yaml (stocks) to config.yaml to begin."
+            "No config.yaml found. Copy config.example.yaml to config.yaml to begin."
         )
     else:
         st.info(

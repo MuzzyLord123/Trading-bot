@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Compare the old vs improved ensemble on three synthetic regimes.
 
-Synthetic data is NOT a substitute for real backtesting – it's a quick way to
-check that the new filters are directionally improving win rate and not
-breaking anything. Always run ``python backtest.py`` on real Kraken data
-before trusting the numbers.
+Synthetic data is NOT a substitute for real backtesting – it's a quick way
+to check that the new filters are directionally improving win rate and not
+breaking anything. Always run ``python backtest.py`` on real Trading 212 /
+yfinance data before trusting the numbers.
 """
 from __future__ import annotations
 
@@ -68,10 +68,10 @@ def _to_ohlcv(close: np.ndarray) -> pd.DataFrame:
 
 def _base_cfg() -> Config:
     return Config(
-        exchange=ExchangeConfig(name="kraken"),
+        exchange=ExchangeConfig(name="trading212"),
         trading=TradingConfig(
-            starting_capital=500.0,
-            symbols=["SYN/GBP"],
+            starting_capital=10000.0,
+            symbols=["SYN"],
             timeframe="1h",
             history_candles=1000,
         ),

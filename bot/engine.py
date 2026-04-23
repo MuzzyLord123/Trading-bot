@@ -8,15 +8,13 @@ from datetime import datetime, timezone
 from rich.table import Table
 
 from .config import Config
-from .exchange import Exchange
 from .execution import buy_fill, sell_fill
-from .factory import build_exchange, is_stock_platform
+from .factory import build_exchange
 from .logger import CsvLogger, console
-from .news import NewsMonitor, NewsSignal
 from .notifications import NullNotifier, TelegramNotifier
 from .portfolio import Portfolio, Position
 from .risk import RiskManager
-from .stocks import is_stock_market_open
+from .stocks import StocksExchange, is_stock_market_open
 from .strategies import Strategy, StrategyContext, build_strategy_from_config
 
 log = logging.getLogger("bot.engine")
@@ -28,7 +26,7 @@ class TradingEngine:
     def __init__(
         self,
         cfg: Config,
-        exchange: Exchange,
+        exchange: StocksExchange,
         strategy: Strategy,
         risk: RiskManager,
     ) -> None:
@@ -57,16 +55,6 @@ class TradingEngine:
         self._halted = False
         self._cooldown_ticks_left: dict[str, int] = {}
         self._bars_held: dict[str, int] = {}
-        self._news_blackout_until: dict[str, float] = {}
-        self._news_monitor = (
-            NewsMonitor(
-                symbols=cfg.trading.symbols,
-                major_threshold=cfg.news.major_threshold,
-                max_age_minutes=cfg.news.max_age_minutes,
-            )
-            if cfg.news.enabled
-            else None
-        )
 
     def run_forever(self) -> None:
         self.exchange.load_markets()
@@ -91,7 +79,7 @@ class TradingEngine:
             time.sleep(self.cfg.trading.poll_interval_seconds)
 
     def tick(self) -> None:
-        if is_stock_platform(self.cfg) and not is_stock_market_open():
+        if not is_stock_market_open():
             log.debug("Market closed – skipping tick")
             return
         prices: dict[str, float] = {}
@@ -121,15 +109,6 @@ class TradingEngine:
         if not prices:
             log.warning("No price data this tick")
             return
-
-        news_signals: list[NewsSignal] = []
-        if self._news_monitor is not None:
-            try:
-                news_signals = self._news_monitor.scan()
-            except Exception as exc:
-                log.warning("news scan failed: %s", exc)
-            for signal in news_signals:
-                self._handle_news(signal, prices, candles)
 
         for symbol in list(self._cooldown_ticks_left.keys()):
             self._cooldown_ticks_left[symbol] -= 1
@@ -170,8 +149,6 @@ class TradingEngine:
                     self._close(pos, prices[symbol], "exit_signal")
                 elif pos is None and sig > 0 and self.risk.can_open(self.portfolio):
                     if symbol in self._cooldown_ticks_left:
-                        continue
-                    if self._in_news_blackout(symbol):
                         continue
                     self._open(symbol, prices[symbol], equity, df)
 
@@ -348,49 +325,6 @@ class TradingEngine:
         self.notifier.send(
             f"CLOSE {pos.symbol} @ {fill_price:.4f} pnl={pnl:.2f} ({reason})"
         )
-
-    def _in_news_blackout(self, symbol: str) -> bool:
-        until = self._news_blackout_until.get(symbol)
-        return until is not None and time.time() < until
-
-    def _handle_news(
-        self, signal: NewsSignal, prices: dict[str, float], candles: dict | None = None
-    ) -> None:
-        if signal.symbol not in self.cfg.trading.symbols:
-            log.debug("news symbol %s not in trading universe, ignoring", signal.symbol)
-            return
-        log.info(
-            "news %s %+d imp=%.1f: %s",
-            signal.symbol, signal.direction, signal.importance, signal.title,
-        )
-        self.notifier.send(
-            f"NEWS {signal.symbol} {'+' if signal.direction > 0 else '-'} "
-            f"{signal.title[:140]}"
-        )
-        price = prices.get(signal.symbol)
-        pos = self.portfolio.positions.get(signal.symbol)
-
-        if signal.direction < 0:
-            # Bad news: close any open position and enter blackout.
-            if pos is not None and price is not None:
-                self._close(pos, price, reason="news_bearish")
-            self._news_blackout_until[signal.symbol] = (
-                time.time() + self.cfg.news.blackout_seconds
-            )
-            return
-
-        # Bullish news.
-        if self.cfg.news.mode != "aggressive":
-            return
-        if pos is not None or price is None:
-            return
-        if self._halted or not self.risk.can_open(self.portfolio):
-            return
-        if signal.symbol in self._cooldown_ticks_left:
-            return
-        equity = self.portfolio.equity(prices)
-        df = candles.get(signal.symbol) if candles else None
-        self._open(signal.symbol, price, equity, df)
 
     def _atr_value(self, candles) -> float | None:
         """Last finite ATR reading, or None if unavailable."""

@@ -38,15 +38,9 @@ def _maybe_filter(
         return strategy
     kwargs = {k: v for k, v in filter_cfg.items() if k != "enabled"}
 
-    fng_enabled = bool(kwargs.pop("fng_enabled", False))
-    kwargs.pop("fng_days", None)
-    if fng_enabled:
-        from ..sentiment import load_fear_greed
-        days = int(filter_cfg.get("fng_days", 400))
-        kwargs["fng_df"] = load_fear_greed(days=days)
-    else:
-        kwargs.pop("fng_min", None)
-        kwargs.pop("fng_max", None)
+    # Drop legacy crypto-only Fear & Greed keys so old configs keep loading.
+    for legacy in ("fng_enabled", "fng_days", "fng_min", "fng_max"):
+        kwargs.pop(legacy, None)
 
     earnings_blackout = int(kwargs.pop("earnings_blackout_days", 0))
     earnings_symbols = kwargs.pop("earnings_symbols", None)

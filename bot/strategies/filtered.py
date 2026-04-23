@@ -5,7 +5,6 @@ import pandas as pd
 
 from ..indicators import adx, atr, ema, supertrend
 from ..news_stocks import days_until_earnings, is_bearish_gap
-from ..sentiment import value_at as fng_value_at
 from .base import Signal, Strategy, StrategyContext
 
 
@@ -37,11 +36,10 @@ class FilteredStrategy(Strategy):
       4. Volatility floor: ATR / price >= ``min_atr_pct``.
       5. Supertrend direction: +1 (uptrend).
       6. Volume surge: last bar volume >= ``volume_mult`` * rolling mean.
-      7. Fear & Greed: index in [``fng_min``, ``fng_max``] at bar time.
-      8. Earnings blackout: skip if next earnings is within
-         ``earnings_blackout_days``. Stock-only.
-      9. Bearish news gap: skip if the prior bar gapped down
-         ``news_gap_threshold`` or more (likely bad news). Stock-only.
+      7. Earnings blackout: skip if next earnings is within
+         ``earnings_blackout_days``.
+      8. Bearish news gap: skip if the prior bar gapped down
+         ``news_gap_threshold`` or more (likely bad news).
     """
 
     name = "filtered"
@@ -62,9 +60,6 @@ class FilteredStrategy(Strategy):
         supertrend_multiplier: float = 3.0,
         volume_mult: float = 0.0,
         volume_period: int = 20,
-        fng_df: pd.DataFrame | None = None,
-        fng_min: int = 0,
-        fng_max: int = 100,
         earnings_calendar: dict[str, pd.DataFrame] | None = None,
         earnings_blackout_days: int = 0,
         news_gap_threshold: float = 0.0,
@@ -83,9 +78,6 @@ class FilteredStrategy(Strategy):
         self.supertrend_multiplier = supertrend_multiplier
         self.volume_mult = volume_mult
         self.volume_period = volume_period
-        self.fng_df = fng_df
-        self.fng_min = fng_min
-        self.fng_max = fng_max
         self.earnings_calendar = earnings_calendar or {}
         self.earnings_blackout_days = earnings_blackout_days
         self.news_gap_threshold = news_gap_threshold
@@ -148,13 +140,6 @@ class FilteredStrategy(Strategy):
             # it biases the gate toward passing.
             avg = vol.rolling(self.volume_period).mean().shift(1).iloc[-1]
             if pd.isna(avg) or vol.iloc[-1] < self.volume_mult * avg:
-                return Signal.FLAT
-
-        if self.fng_df is not None and not self.fng_df.empty:
-            fng = fng_value_at(self.fng_df, df["timestamp"].iloc[-1])
-            # If unavailable for this timestamp (e.g. backtest older than
-            # the F&G history), skip the gate rather than reject.
-            if fng is not None and not (self.fng_min <= fng <= self.fng_max):
                 return Signal.FLAT
 
         if self.earnings_blackout_days > 0:

@@ -128,10 +128,10 @@ class SweepConfig:
 
 def to_config(s: SweepConfig) -> Config:
     return Config(
-        exchange=ExchangeConfig(name="kraken"),
+        exchange=ExchangeConfig(name="trading212"),
         trading=TradingConfig(
-            starting_capital=500.0,
-            symbols=["SYN/GBP"],
+            starting_capital=10000.0,
+            symbols=["SYN"],
             timeframe="1h",
             history_candles=500,
         ),

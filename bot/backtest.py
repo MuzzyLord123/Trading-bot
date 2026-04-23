@@ -8,13 +8,13 @@ import numpy as np
 import pandas as pd
 
 from .config import Config
-from .exchange import Exchange
 from .execution import buy_fill, sell_fill
 from .factory import build_exchange
 from .indicators import atr as _atr
 from .logger import CsvLogger
 from .portfolio import Portfolio, Position
 from .risk import RiskManager
+from .stocks import StocksExchange
 from .strategies import Strategy, StrategyContext, build_strategy_from_config
 
 log = logging.getLogger("bot.backtest")
@@ -160,7 +160,7 @@ class Backtester:
     def __init__(
         self,
         cfg: Config,
-        exchange: Exchange,
+        exchange: StocksExchange,
         strategy: Strategy,
         risk: RiskManager,
     ) -> None:

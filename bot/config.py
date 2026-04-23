@@ -11,37 +11,38 @@ from dotenv import load_dotenv
 
 @dataclass
 class ExchangeConfig:
-    name: str = "kraken"
-    requires_password: bool = False
+    # Kept for compatibility with older configs; this bot only trades
+    # through Trading 212 now, so the only meaningful field is ``sandbox``
+    # (demo vs live T212 environment).
+    name: str = "trading212"
     sandbox: bool = False
-    enable_rate_limit: bool = True
 
 
 @dataclass
 class TradingConfig:
     mode: str = "paper"
     quote_currency: str = "GBP"
-    starting_capital: float = 500.0
-    symbols: list[str] = field(default_factory=lambda: ["BTC/GBP"])
+    starting_capital: float = 10000.0
+    symbols: list[str] = field(default_factory=lambda: ["VUAG.L"])
     timeframe: str = "1h"
-    poll_interval_seconds: int = 60
+    poll_interval_seconds: int = 300
     history_candles: int = 500
 
 
 @dataclass
 class RiskConfig:
     risk_per_trade: float = 0.01
-    max_position_pct: float = 0.25
-    max_open_positions: int = 3
-    stop_loss_pct: float = 0.03
-    take_profit_pct: float = 0.06
-    trailing_stop_pct: float = 0.02
+    max_position_pct: float = 0.1
+    max_open_positions: int = 5
+    stop_loss_pct: float = 0.04
+    take_profit_pct: float = 0.10
+    trailing_stop_pct: float = 0.03
     daily_loss_limit_pct: float = 0.05
     max_drawdown_pct: float = 0.20
-    taker_fee_pct: float = 0.0026
+    taker_fee_pct: float = 0.0015
     slippage_pct: float = 0.0005
     # Bars to wait before re-entering the same symbol after a losing exit.
-    cooldown_bars_after_loss: int = 12
+    cooldown_bars_after_loss: int = 4
     # Minimum reward:risk ratio required to enter (take_profit/stop distance).
     min_reward_to_risk: float = 1.5
     # Once unrealised profit reaches this % of entry, move stop to breakeven.
@@ -88,21 +89,6 @@ class NotificationsConfig:
 
 
 @dataclass
-class NewsConfig:
-    """Live-mode only: act on major news headlines."""
-    enabled: bool = False
-    # "defensive": only close positions on bad news.
-    # "aggressive": also open positions on good news (see docs).
-    mode: str = "defensive"
-    major_threshold: float = 5.0
-    max_age_minutes: int = 120
-    # Block new entries for this many seconds after a bad-news close.
-    blackout_seconds: int = 14400  # 4 hours
-    # Only act on news that fires at least this many polls before open.
-    min_confirmations: int = 1
-
-
-@dataclass
 class Config:
     exchange: ExchangeConfig
     trading: TradingConfig
@@ -110,7 +96,6 @@ class Config:
     strategy: StrategyConfig
     logging: LoggingConfig
     notifications: NotificationsConfig
-    news: NewsConfig = field(default_factory=NewsConfig)
     secrets: dict[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -126,18 +111,20 @@ class Config:
         # Expand universe tokens ('SP500' etc.) in trading.symbols.
         from .universe import expand_universe_tokens
         trading_cfg.symbols = expand_universe_tokens(trading_cfg.symbols)
+        # Drop legacy ccxt-only keys from older configs so they don't blow up
+        # the dataclass constructor.
+        exchange_raw = {
+            k: v for k, v in raw.get("exchange", {}).items()
+            if k in {"name", "sandbox"}
+        }
         cfg = cls(
-            exchange=ExchangeConfig(**raw.get("exchange", {})),
+            exchange=ExchangeConfig(**exchange_raw),
             trading=trading_cfg,
             risk=RiskConfig(**raw.get("risk", {})),
             strategy=StrategyConfig(**raw.get("strategy", {})),
             logging=LoggingConfig(**raw.get("logging", {})),
             notifications=NotificationsConfig(**raw.get("notifications", {})),
-            news=NewsConfig(**raw.get("news", {})),
             secrets={
-                "api_key": os.getenv("EXCHANGE_API_KEY", ""),
-                "api_secret": os.getenv("EXCHANGE_API_SECRET", ""),
-                "api_password": os.getenv("EXCHANGE_API_PASSWORD", ""),
                 "telegram_bot_token": os.getenv("TELEGRAM_BOT_TOKEN", ""),
                 "telegram_chat_id": os.getenv("TELEGRAM_CHAT_ID", ""),
                 "trading212_api_key": os.getenv("TRADING212_API_KEY", ""),
@@ -147,12 +134,7 @@ class Config:
         return cfg
 
     def validate(self) -> None:
-        """Raise ValueError if the config contains obviously bad values.
-
-        Catches common misconfigurations (empty symbol list, out-of-range
-        percentages, missing live-mode secrets) before the engine starts
-        placing orders with nonsensical parameters.
-        """
+        """Raise ValueError if the config contains obviously bad values."""
         errors: list[str] = []
 
         if self.trading.mode not in ("paper", "live"):
@@ -205,13 +187,8 @@ class Config:
         if not 0 <= r.scale_out_fraction < 1:
             errors.append("risk.scale_out_fraction must be in [0, 1)")
 
-        if self.trading.mode == "live":
-            if not self.secrets.get("api_key") or not self.secrets.get("api_secret"):
-                errors.append(
-                    "live mode requires EXCHANGE_API_KEY and EXCHANGE_API_SECRET in env"
-                )
-            if self.exchange.requires_password and not self.secrets.get("api_password"):
-                errors.append("exchange requires password but EXCHANGE_API_PASSWORD is empty")
+        if self.trading.mode == "live" and not self.secrets.get("trading212_api_key"):
+            errors.append("live mode requires TRADING212_API_KEY in .env")
 
         if self.notifications.telegram and (
             not self.secrets.get("telegram_bot_token")

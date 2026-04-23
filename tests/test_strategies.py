@@ -28,7 +28,7 @@ def _df(close):
     )
 
 
-CTX = StrategyContext(symbol="BTC/GBP", timeframe="1h")
+CTX = StrategyContext(symbol="VUAG.L", timeframe="1h")
 
 
 def test_ma_crossover_long_on_uptrend():
