@@ -55,6 +55,11 @@ class TradingEngine:
         self._halted = False
         self._cooldown_ticks_left: dict[str, int] = {}
         self._bars_held: dict[str, int] = {}
+        # Last-seen candle timestamp per symbol. Used to advance bars_held
+        # and cooldown on a per-bar basis, not per tick — otherwise a
+        # 5-minute poll on an hourly timeframe would decay these 12x faster
+        # than the config intends.
+        self._last_candle_ts: dict[str, object] = {}
 
     def run_forever(self) -> None:
         self.exchange.load_markets()
@@ -109,7 +114,20 @@ class TradingEngine:
             log.warning("No price data this tick")
             return
 
+        # Detect which symbols printed a new candle this tick. bars_held
+        # and cooldown decay are driven by bar count, not tick count.
+        new_bar_for: set[str] = set()
+        for symbol, df in candles.items():
+            last_ts = df["timestamp"].iloc[-1]
+            previous = self._last_candle_ts.get(symbol)
+            if previous is None or last_ts != previous:
+                self._last_candle_ts[symbol] = last_ts
+                if previous is not None:
+                    new_bar_for.add(symbol)
+
         for symbol in list(self._cooldown_ticks_left.keys()):
+            if symbol not in new_bar_for:
+                continue
             self._cooldown_ticks_left[symbol] -= 1
             if self._cooldown_ticks_left[symbol] <= 0:
                 del self._cooldown_ticks_left[symbol]
@@ -121,7 +139,8 @@ class TradingEngine:
             pos.update_excursion(price)
             pos.update_trailing(price)
             self.risk.maybe_move_to_breakeven(pos, price)
-            self._bars_held[symbol] = self._bars_held.get(symbol, 0) + 1
+            if symbol in new_bar_for:
+                self._bars_held[symbol] = self._bars_held.get(symbol, 0) + 1
             if self.risk.should_scale_out(pos, price):
                 self._scale_out(pos, price)
             reason = self.risk.should_exit(
@@ -171,6 +190,13 @@ class TradingEngine:
             return
         amount = self.exchange.amount_to_precision(symbol, sizing.amount)
         if amount <= 0:
+            return
+        min_notional = self.cfg.risk.min_notional_value
+        if min_notional > 0 and amount * price < min_notional:
+            log.debug(
+                "skipping %s: notional %.2f below min %.2f",
+                symbol, amount * price, min_notional,
+            )
             return
 
         if self.cfg.trading.mode == "live":

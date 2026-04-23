@@ -27,6 +27,10 @@ class TradingConfig:
     timeframe: str = "1h"
     poll_interval_seconds: int = 300
     history_candles: int = 500
+    # Tickers to strip out AFTER universe expansion. Useful for pulling
+    # SP500 / NASDAQ100 but skipping specific names (illiquid for you,
+    # not tradable on T212, sector avoidance, etc.).
+    excluded_symbols: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -66,6 +70,10 @@ class RiskConfig:
     # position and move the remaining stop to break-even. 0 disables.
     scale_out_at_r: float = 0.0
     scale_out_fraction: float = 0.5
+    # Floor for trade notional (quote currency). T212 rejects sub-minimum
+    # orders; failing fast locally keeps us from burning rate budget on
+    # orders that will bounce. 0 disables.
+    min_notional_value: float = 1.0
 
 
 @dataclass
@@ -108,9 +116,12 @@ class Config:
             )
         raw = yaml.safe_load(p.read_text()) or {}
         trading_cfg = TradingConfig(**raw.get("trading", {}))
-        # Expand universe tokens ('SP500' etc.) in trading.symbols.
+        # Expand universe tokens ('SP500' etc.) in trading.symbols, then
+        # apply the exclusion list. Exclusions are case-insensitive.
         from .universe import expand_universe_tokens
-        trading_cfg.symbols = expand_universe_tokens(trading_cfg.symbols)
+        expanded = expand_universe_tokens(trading_cfg.symbols)
+        excluded = {s.upper() for s in trading_cfg.excluded_symbols}
+        trading_cfg.symbols = [s for s in expanded if s.upper() not in excluded]
         # Only pass known keys so legacy configs (which may include fields
         # that no longer exist on ExchangeConfig) still load.
         exchange_raw = {
@@ -186,6 +197,8 @@ class Config:
             errors.append("risk.scale_out_at_r must be >= 0")
         if not 0 <= r.scale_out_fraction < 1:
             errors.append("risk.scale_out_fraction must be in [0, 1)")
+        if r.min_notional_value < 0:
+            errors.append("risk.min_notional_value must be >= 0")
 
         if self.trading.mode == "live" and not self.secrets.get("trading212_api_key"):
             errors.append("live mode requires TRADING212_API_KEY in .env")

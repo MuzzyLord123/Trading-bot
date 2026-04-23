@@ -31,7 +31,20 @@ from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
+
+
+def _is_transient_http(exc: BaseException) -> bool:
+    """Retry HTTPError only on 429 and 5xx. 4xx client errors (bad order,
+    insufficient funds, invalid ticker) won't heal on retry and retrying
+    them just hides the real error and wastes T212 rate budget.
+    Connection errors / timeouts are always retried.
+    """
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code == 429 or exc.code >= 500
+    if isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError)):
+        return True
+    return False
 
 log = logging.getLogger("bot.stocks")
 
@@ -243,7 +256,11 @@ class Trading212Broker:
         self._instruments: list[dict[str, Any]] | None = None
         self._ticker_map: dict[str, str] = {}
 
-    @retry(stop=stop_after_attempt(4), wait=wait_exponential(multiplier=1, min=2, max=16))
+    @retry(
+        stop=stop_after_attempt(4),
+        wait=wait_exponential(multiplier=1, min=2, max=16),
+        retry=retry_if_exception(_is_transient_http),
+    )
     def _request(self, method: str, path: str, body: dict[str, Any] | None = None) -> Any:
         # Soft rate-limit: space requests out to avoid 429s.
         delta = time.time() - self._last_request

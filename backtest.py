@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import click
 from rich.table import Table
@@ -10,6 +11,8 @@ from rich.table import Table
 from bot.backtest import build_backtester
 from bot.config import Config
 from bot.logger import console, setup_logging
+
+STATS_PATH = Path("reports/backtest_stats.json")
 
 
 @click.command()
@@ -42,6 +45,9 @@ def main(config_path: str, days: int, no_csv: bool, windows: int, walk_forward: 
 
     result = bt.run(days=days, write_csv=not no_csv)
     stats = result.stats(cfg.trading.starting_capital)
+    if not no_csv and stats:
+        STATS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        STATS_PATH.write_text(json.dumps(stats, indent=2))
 
     table = Table(title=f"Backtest: {cfg.strategy.name} over {days}d")
     table.add_column("metric")

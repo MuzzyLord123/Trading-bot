@@ -37,6 +37,7 @@ TRADES_PATH = ROOT / "logs" / "trades.csv"
 EQUITY_PATH = ROOT / "logs" / "equity.csv"
 BACKTEST_EQUITY = ROOT / "reports" / "backtest_equity.csv"
 BACKTEST_TRADES = ROOT / "reports" / "backtest_trades.csv"
+BACKTEST_STATS = ROOT / "reports" / "backtest_stats.json"
 BACKTEST_LOG = ROOT / "reports" / "last_backtest.log"
 
 API_KEY_FIELDS = [
@@ -743,6 +744,27 @@ with tabs[4]:
         c3.metric("Total P&L", format_currency(stats["total_pnl"], ccy))
         c4.metric("Best", format_currency(stats["best"], ccy))
         c5.metric("Worst", format_currency(stats["worst"], ccy))
+
+        # Full stats dict from backtest.py run (sharpe/sortino/calmar/
+        # max_dd/benchmark/excess return). Only present if the last run
+        # wrote reports/backtest_stats.json.
+        if BACKTEST_STATS.exists():
+            try:
+                full_stats = json.loads(BACKTEST_STATS.read_text())
+            except (json.JSONDecodeError, OSError):
+                full_stats = {}
+            if full_stats:
+                r1, r2, r3, r4 = st.columns(4)
+                r1.metric("Total return", f"{full_stats.get('total_return_pct', 0):.2f}%",
+                          f"vs BH {full_stats.get('excess_return_pct', 0):+.2f}%")
+                r2.metric("Max drawdown", f"{full_stats.get('max_drawdown_pct', 0):.2f}%")
+                r3.metric("Sharpe", f"{full_stats.get('sharpe', 0):.2f}")
+                r4.metric("Sortino", f"{full_stats.get('sortino', 0):.2f}")
+                q1, q2, q3, q4 = st.columns(4)
+                q1.metric("Calmar", f"{full_stats.get('calmar', 0):.2f}")
+                q2.metric("Ulcer", f"{full_stats.get('ulcer_index', 0):.2f}")
+                q3.metric("Longest win streak", full_stats.get("longest_win_streak", 0))
+                q4.metric("Longest loss streak", full_stats.get("longest_loss_streak", 0))
 
     if not eq_bt.empty:
         eq_bt["timestamp"] = pd.to_datetime(eq_bt["timestamp"], utc=True, errors="coerce")

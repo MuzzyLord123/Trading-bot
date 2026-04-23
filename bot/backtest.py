@@ -24,6 +24,11 @@ log = logging.getLogger("bot.backtest")
 class BacktestResult:
     equity_curve: pd.DataFrame
     trades: list[dict] = field(default_factory=list)
+    # Equal-weight buy-and-hold return across the traded universe over the
+    # same window. Populated by Backtester.run. Exposes "are we actually
+    # beating a do-nothing baseline?" — the single most important sanity
+    # check for an active strategy.
+    benchmark_return: float = 0.0
 
     def stats(self, starting_capital: float) -> dict[str, float]:
         if self.equity_curve.empty:
@@ -78,6 +83,14 @@ class BacktestResult:
             if self.trades
             else 0.0
         )
+        median_pnl = float(np.median([t["pnl"] for t in self.trades])) if self.trades else 0.0
+        longest_win_streak, longest_loss_streak = _streaks(
+            [t["pnl"] for t in self.trades]
+        )
+        # Ulcer Index — RMS of drawdowns. Unlike max_drawdown it penalises
+        # both depth and duration, so strategies that crash fast and recover
+        # score better than ones that grind sideways underwater.
+        ulcer_index = float(np.sqrt((dd * 100).pow(2).mean())) if not dd.empty else 0.0
         return {
             "final_equity": round(float(eq.iloc[-1]), 2),
             "total_return_pct": round(total_return * 100, 2),
@@ -97,6 +110,12 @@ class BacktestResult:
             else 0.0,
             "expectancy": round(expectancy, 2),
             "avg_bars_held": round(avg_bars_held, 1),
+            "median_trade_pnl": round(median_pnl, 2),
+            "longest_win_streak": longest_win_streak,
+            "longest_loss_streak": longest_loss_streak,
+            "ulcer_index": round(ulcer_index, 2),
+            "benchmark_return_pct": round(self.benchmark_return * 100, 2),
+            "excess_return_pct": round((total_return - self.benchmark_return) * 100, 2),
         }
 
     def window_stats(self, n_windows: int = 4) -> list[dict]:
@@ -142,6 +161,40 @@ class BacktestResult:
                 }
             )
         return out
+
+
+def _streaks(pnls: list[float]) -> tuple[int, int]:
+    """Longest run of wins and longest run of losses. Zero-PnL counts as a loss."""
+    longest_win = longest_loss = 0
+    cur_win = cur_loss = 0
+    for p in pnls:
+        if p > 0:
+            cur_win += 1
+            cur_loss = 0
+        else:
+            cur_loss += 1
+            cur_win = 0
+        longest_win = max(longest_win, cur_win)
+        longest_loss = max(longest_loss, cur_loss)
+    return longest_win, longest_loss
+
+
+def _buy_and_hold_return(data: dict[str, pd.DataFrame]) -> float:
+    """Equal-weight buy-and-hold return across the traded universe.
+
+    Gives a cheap baseline: if the strategy's total_return is below this,
+    you'd have done better doing nothing. This is the single most honest
+    number in the report.
+    """
+    returns: list[float] = []
+    for df in data.values():
+        if len(df) < 2:
+            continue
+        first = float(df["close"].iloc[0])
+        last = float(df["close"].iloc[-1])
+        if first > 0:
+            returns.append(last / first - 1)
+    return sum(returns) / len(returns) if returns else 0.0
 
 
 def _annualisation(timestamps: pd.Series) -> float:
@@ -352,6 +405,12 @@ class Backtester:
                         )
                         if sizing.amount <= 0:
                             continue
+                        min_notional = self.cfg.risk.min_notional_value
+                        if (
+                            min_notional > 0
+                            and sizing.amount * prices[symbol] < min_notional
+                        ):
+                            continue
                         entry_fill = buy_fill(prices[symbol], sizing.amount, self.cfg.risk)
                         if entry_fill.cash_out > portfolio.cash:
                             continue
@@ -380,6 +439,7 @@ class Backtester:
             )
 
         result.equity_curve = pd.DataFrame(equity_rows)
+        result.benchmark_return = _buy_and_hold_return(data)
         if write_csv and not result.equity_curve.empty:
             eq_log = CsvLogger(
                 "reports/backtest_equity.csv", ["timestamp", "equity", "cash"]

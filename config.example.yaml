@@ -47,6 +47,11 @@ trading:
 
   history_candles: 1000   # ~30 weeks of hourly bars (yfinance caps 60m at 730d)
 
+  # Tickers to drop AFTER SP500/NASDAQ100 expansion. Case-insensitive.
+  # Useful for pulling an index but skipping names you don't want to hold
+  # (illiquid for your size, sector avoidance, unsupported on T212, etc.).
+  excluded_symbols: []
+
 risk:
   # 1% per trade is the default for accounts of this size. 1% of £33k = £330
   # per losing trade. 10 losers in a row = -10% equity (£3,300). Historically
@@ -91,6 +96,11 @@ risk:
 
   drawdown_risk_reduction_threshold: 0.05
   drawdown_risk_reduction_factor: 0.5
+
+  # Floor for trade notional in the quote currency. Trading 212 rejects
+  # orders below roughly £1; failing fast locally saves a round-trip and
+  # keeps the rate-limit budget for real orders. 0 disables.
+  min_notional_value: 1.0
 
 strategy:
   # Ensemble proved best on real data; keep it.
