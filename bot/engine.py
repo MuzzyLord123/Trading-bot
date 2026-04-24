@@ -78,6 +78,30 @@ class TradingEngine:
         except Exception as exc:
             log.warning("portfolio persistence failed: %s", exc)
 
+    def _reconcile_with_broker(self) -> None:
+        """Bring the in-memory portfolio in line with what Trading 212 says
+        is actually held. Only meaningful in live mode where a real broker
+        sits behind the adapter."""
+        broker = getattr(self.exchange, "broker", None)
+        if broker is None:
+            log.debug("exchange has no broker attribute; skipping reconciliation")
+            return
+        try:
+            from .reconcile import reconcile
+            report = reconcile(
+                self.portfolio,
+                broker,
+                trailing_stop_pct=self.cfg.risk.trailing_stop_pct,
+                stop_loss_pct_fallback=self.cfg.risk.stop_loss_pct,
+            )
+        except Exception as exc:
+            log.error("reconciliation failed: %s", exc)
+            return
+        log.info("reconciliation: %s", report.summary())
+        if not report.clean:
+            self.notifier.send(f"Reconciled with broker: {report.summary()}")
+            self._persist()
+
     def run_forever(self) -> None:
         self.exchange.load_markets()
         log.info(
@@ -88,6 +112,11 @@ class TradingEngine:
         self.notifier.send(
             f"Trading bot started in {self.cfg.trading.mode} mode on Trading 212"
         )
+        # Live mode: reconcile against the broker before the first tick
+        # so we don't act on stale local state. Paper mode has no broker
+        # to query, so we skip.
+        if self.cfg.trading.mode == "live":
+            self._reconcile_with_broker()
         while True:
             try:
                 self.tick()
