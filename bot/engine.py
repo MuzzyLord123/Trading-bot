@@ -14,6 +14,7 @@ from .logger import CsvLogger, console
 from .notifications import NullNotifier, TelegramNotifier
 from .portfolio import Portfolio, Position
 from .risk import RiskManager
+from .state import DEFAULT_PATH as STATE_PATH, load_portfolio, save_portfolio
 from .stocks import StocksExchange, is_stock_market_open
 from .strategies import Strategy, StrategyContext, build_strategy_from_config
 
@@ -34,7 +35,15 @@ class TradingEngine:
         self.exchange = exchange
         self.strategy = strategy
         self.risk = risk
-        self.portfolio = Portfolio.new(cfg.trading.starting_capital)
+        # Resume from the last saved portfolio state if one exists; otherwise
+        # start fresh from the configured starting_capital. This keeps open
+        # positions, cooldown-relevant realised P&L and peak equity across
+        # restarts so stops and daily loss limits remain meaningful.
+        restored = load_portfolio(STATE_PATH)
+        if restored is not None:
+            self.portfolio = restored
+        else:
+            self.portfolio = Portfolio.new(cfg.trading.starting_capital)
         self.trade_log = CsvLogger(
             cfg.logging.trade_log,
             [
@@ -60,6 +69,14 @@ class TradingEngine:
         # 5-minute poll on an hourly timeframe would decay these 12x faster
         # than the config intends.
         self._last_candle_ts: dict[str, object] = {}
+
+    def _persist(self) -> None:
+        """Snapshot the portfolio to disk. Called after every open/close
+        so a crash between ticks never loses more than the current trade."""
+        try:
+            save_portfolio(self.portfolio, STATE_PATH)
+        except Exception as exc:
+            log.warning("portfolio persistence failed: %s", exc)
 
     def run_forever(self) -> None:
         self.exchange.load_markets()
@@ -256,6 +273,7 @@ class TradingEngine:
         self.notifier.send(
             f"OPEN {symbol} {amount:.6f} @ {fill_price:.4f}"
         )
+        self._persist()
 
     def _scale_out(self, pos: Position, price: float) -> None:
         """Close ``scale_out_fraction`` of the position and move stop to entry."""
@@ -304,6 +322,7 @@ class TradingEngine:
             "SCALE-OUT %s %.6f @ %.4f pnl=%.2f (remaining %.6f, stop->%.4f)",
             pos.symbol, partial, fill_price, pnl, pos.amount, pos.stop_loss,
         )
+        self._persist()
 
     def _close(self, pos: Position, price: float, reason: str) -> None:
         amount = pos.amount
@@ -350,6 +369,7 @@ class TradingEngine:
         self.notifier.send(
             f"CLOSE {pos.symbol} @ {fill_price:.4f} pnl={pnl:.2f} ({reason})"
         )
+        self._persist()
 
     def _atr_value(self, candles) -> float | None:
         """Last finite ATR reading, or None if unavailable."""
