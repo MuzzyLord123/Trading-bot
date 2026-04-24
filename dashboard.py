@@ -104,12 +104,26 @@ def save_yaml(path: Path, data: dict[str, Any]) -> None:
 
 
 def read_csv(path: Path) -> pd.DataFrame:
+    """Read a CSV written by the bot, tolerant of mid-life schema changes.
+
+    If an older run wrote fewer columns than a newer one (e.g. before
+    bars_held / mfe / mae were added), pandas' strict parser blows up with
+    "Expected N fields, saw M". Fall back to a lenient parse that skips
+    malformed lines so the dashboard never crashes on one bad log file -
+    CsvLogger now rotates stale files on header change, but users with
+    pre-existing logs still get a graceful view.
+    """
     if not path.exists():
         return pd.DataFrame()
     try:
         return pd.read_csv(path)
     except pd.errors.EmptyDataError:
         return pd.DataFrame()
+    except pd.errors.ParserError:
+        try:
+            return pd.read_csv(path, on_bad_lines="skip", engine="python")
+        except Exception:
+            return pd.DataFrame()
 
 
 def format_currency(value: float, ccy: str = "GBP") -> str:
