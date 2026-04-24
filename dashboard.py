@@ -39,6 +39,7 @@ BACKTEST_EQUITY = ROOT / "reports" / "backtest_equity.csv"
 BACKTEST_TRADES = ROOT / "reports" / "backtest_trades.csv"
 BACKTEST_STATS = ROOT / "reports" / "backtest_stats.json"
 BACKTEST_LOG = ROOT / "reports" / "last_backtest.log"
+STATE_PATH = ROOT / "state" / "portfolio.json"
 
 API_KEY_FIELDS = [
     ("TRADING212_API_KEY", "Trading 212 API key"),
@@ -203,6 +204,45 @@ def pnl_stats(trades: pd.DataFrame) -> dict[str, float]:
     }
 
 
+@st.cache_data(ttl=30)
+def load_state() -> dict[str, Any]:
+    """Return the engine's persisted portfolio state, or empty dict if
+    nothing saved yet. Cached so a 1-second auto-refresh doesn't re-parse
+    the file on every rerun."""
+    if not STATE_PATH.exists():
+        return {}
+    try:
+        return json.loads(STATE_PATH.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+@st.cache_data(ttl=60)
+def fetch_live_prices(symbols: tuple[str, ...]) -> dict[str, float]:
+    """Batch quote lookup via yfinance. Cached for a minute so
+    auto-refresh tabs don't hammer Yahoo."""
+    if not symbols:
+        return {}
+    try:
+        import yfinance as yf
+    except ImportError:
+        return {}
+    try:
+        quotes = yf.Tickers(" ".join(symbols))
+    except Exception:
+        return {}
+    out: dict[str, float] = {}
+    for sym in symbols:
+        try:
+            info = quotes.tickers[sym].fast_info
+            last = getattr(info, "last_price", None) or info.get("last_price") if hasattr(info, "get") else None
+            if last is not None and not pd.isna(last):
+                out[sym] = float(last)
+        except Exception:
+            continue
+    return out
+
+
 def per_symbol_stats(trades: pd.DataFrame) -> pd.DataFrame:
     closed = _numeric_pnl(trades)
     if closed.empty:
@@ -252,6 +292,15 @@ with st.sidebar:
     if st.button("Refresh data", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
+
+    auto_refresh = st.toggle(
+        "Auto-refresh", value=False,
+        help="Re-runs the page on an interval so the Overview tab stays live.",
+    )
+    refresh_interval = st.slider(
+        "Interval (seconds)", min_value=5, max_value=120, value=15, step=5,
+        disabled=not auto_refresh,
+    )
 
     st.markdown("---")
     st.caption(
@@ -329,22 +378,51 @@ with tabs[0]:
 
     with col_b:
         st.subheader("Open positions")
-        if trades.empty:
-            st.caption("No positions.")
+        state = load_state()
+        positions = state.get("positions") or []
+        if not positions:
+            st.caption("No open positions.")
         else:
-            open_rows = []
-            for sym, grp in trades.groupby("symbol"):
-                grp = grp.sort_values("timestamp")
-                last = grp.iloc[-1]
-                if str(last.get("reason", "")) == "entry":
-                    open_rows.append(last)
-            if open_rows:
-                st.dataframe(
-                    pd.DataFrame(open_rows)[["symbol", "price", "amount", "timestamp"]],
-                    use_container_width=True, hide_index=True, height=360,
-                )
-            else:
-                st.caption("No open positions.")
+            # Live-price every currently held symbol in one batched
+            # yfinance call, then derive unrealised P&L locally.
+            live_prices = fetch_live_prices(tuple(p["symbol"] for p in positions))
+            rows = []
+            total_unrealised = 0.0
+            for p in positions:
+                sym = p["symbol"]
+                entry = float(p["entry_price"])
+                amount = float(p["amount"])
+                live = live_prices.get(sym)
+                if live is None:
+                    unrealised = 0.0
+                    live_display = "-"
+                    pct_display = "-"
+                else:
+                    unrealised = (live - entry) * amount
+                    total_unrealised += unrealised
+                    live_display = f"{live:,.4f}"
+                    pct_display = f"{((live / entry) - 1) * 100:+.2f}%"
+                rows.append({
+                    "symbol": sym,
+                    "qty": round(amount, 4),
+                    "entry": round(entry, 4),
+                    "last": live_display,
+                    "stop": round(float(p.get("stop_loss", 0.0)), 4),
+                    "tp": round(float(p.get("take_profit", 0.0)), 4),
+                    "pnl": round(unrealised, 2),
+                    "pnl%": pct_display,
+                    "mfe": round(float(p.get("mfe", 0.0)), 4),
+                    "mae": round(float(p.get("mae", 0.0)), 4),
+                })
+            st.dataframe(
+                pd.DataFrame(rows),
+                use_container_width=True, hide_index=True, height=360,
+            )
+            st.caption(
+                f"Unrealised total: {format_currency(total_unrealised, ccy)} "
+                f"across {len(positions)} position(s). State snapshot from "
+                f"{state.get('saved_at', 'unknown')}"
+            )
 
 
 # -------------------------- Trades tab -----------------------------------
@@ -851,3 +929,13 @@ with tabs[5]:
                     st.error(f"Could not read: {exc}")
             else:
                 st.caption(f"{name} cache empty.")
+
+
+# ---------------------------------------------------------------------------
+# Auto-refresh hook. Placed at the very end so every other tab has rendered
+# before the sleep kicks in; Streamlit reruns the whole script when we call
+# st.rerun(), so we avoid flashing half-drawn pages.
+# ---------------------------------------------------------------------------
+if auto_refresh:
+    time.sleep(refresh_interval)
+    st.rerun()
