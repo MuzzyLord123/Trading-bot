@@ -587,11 +587,13 @@ def build_backtester(cfg: Config) -> Backtester:
     filter_cfg = dict(cfg.strategy.filter or {})
     if int(filter_cfg.get("earnings_blackout_days", 0)) > 0:
         filter_cfg["earnings_symbols"] = list(cfg.trading.symbols)
+    mtf_cfg = dict(getattr(cfg.strategy, "multi_timeframe", {}) or {})
     strategy = build_strategy_from_config(
         cfg.strategy.name,
         cfg.strategy.params,
         cfg.strategy.ensemble,
         filter_cfg,
+        multi_timeframe_cfg=mtf_cfg,
     )
     risk = RiskManager(cfg.risk)
     return Backtester(cfg, exchange, strategy, risk)

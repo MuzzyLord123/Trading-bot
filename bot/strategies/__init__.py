@@ -11,6 +11,7 @@ from .filtered import FilteredStrategy
 from .keltner import KeltnerStrategy
 from .ma_crossover import MaCrossoverStrategy
 from .macd import MacdStrategy
+from .multi_timeframe import MultiTimeframeStrategy
 from .obv_trend import ObvTrendStrategy
 from .rsi_reversion import RsiReversionStrategy
 from .stochastic import StochasticStrategy
@@ -65,14 +66,34 @@ def _maybe_filter(
     return FilteredStrategy(inner=strategy, **kwargs)
 
 
+def _maybe_multi_timeframe(
+    strategy: Strategy, mtf_cfg: dict[str, Any] | None,
+) -> Strategy:
+    """Optionally wrap ``strategy`` in :class:`MultiTimeframeStrategy`.
+
+    ``mtf_cfg`` is a dict-like object with optional ``enabled`` (default
+    False), ``rule`` (e.g. "1D", auto-derived from the trading timeframe
+    when None) and ``require_long_on_htf`` (default True).
+    """
+    if not mtf_cfg or not mtf_cfg.get("enabled", False):
+        return strategy
+    return MultiTimeframeStrategy(
+        inner=strategy,
+        htf_rule=mtf_cfg.get("rule"),
+        require_long_on_htf=bool(mtf_cfg.get("require_long_on_htf", True)),
+    )
+
+
 def build_strategy_from_config(
     name: str,
     params: dict[str, dict[str, Any]],
     ensemble_cfg: dict[str, Any] | None = None,
     filter_cfg: dict[str, Any] | None = None,
+    multi_timeframe_cfg: dict[str, Any] | None = None,
 ) -> Strategy:
     if name != "ensemble":
-        return _maybe_filter(_build_leaf(name, params.get(name, {})), filter_cfg)
+        core = _maybe_filter(_build_leaf(name, params.get(name, {})), filter_cfg)
+        return _maybe_multi_timeframe(core, multi_timeframe_cfg)
     ensemble_cfg = ensemble_cfg or {}
     member_names: list[str] = ensemble_cfg.get("members") or list(
         k for k in _REGISTRY if k != "ensemble"
@@ -86,7 +107,8 @@ def build_strategy_from_config(
         min_agreement=int(ensemble_cfg.get("min_agreement", 2)),
         min_score=float(ensemble_cfg.get("min_score", 1.5)),
     )
-    return _maybe_filter(ens, filter_cfg)
+    core = _maybe_filter(ens, filter_cfg)
+    return _maybe_multi_timeframe(core, multi_timeframe_cfg)
 
 
 __all__ = [
@@ -105,4 +127,5 @@ __all__ = [
     "ObvTrendStrategy",
     "EnsembleStrategy",
     "FilteredStrategy",
+    "MultiTimeframeStrategy",
 ]

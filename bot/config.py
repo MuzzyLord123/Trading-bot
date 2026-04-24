@@ -82,6 +82,11 @@ class StrategyConfig:
     ensemble: dict[str, Any] = field(default_factory=dict)
     params: dict[str, dict[str, Any]] = field(default_factory=dict)
     filter: dict[str, Any] = field(default_factory=dict)
+    # Opt-in higher-timeframe confirmation. Wraps the (optionally filtered)
+    # strategy so a LONG only fires if the same logic also agrees on the
+    # HTF. Keys: enabled (bool), rule (e.g. "1D"; auto-derived if None),
+    # require_long_on_htf (bool, default True).
+    multi_timeframe: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

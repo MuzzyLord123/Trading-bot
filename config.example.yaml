@@ -149,6 +149,16 @@ strategy:
     earnings_blackout_days: 2
     news_gap_threshold: 0.05
 
+  # Optional higher-timeframe confirmation. When enabled, a LONG on the
+  # native bar must also be confirmed by the same strategy run against
+  # the resampled frame. Reduces whipsaws on trend strategies; not useful
+  # on mean reverters, so leave disabled if ensemble is RSI-heavy.
+  multi_timeframe:
+    enabled: false
+    # rule: null   # auto-picks e.g. "1D" for a "1h" trading timeframe
+    # rule: "4h"
+    require_long_on_htf: true
+
   # Indicator periods tuned for hourly stock bars.
   # Any strategy listed in `ensemble.members` can have its params tuned
   # here. Registered names: ma_crossover, rsi_reversion, macd, bollinger,
