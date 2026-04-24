@@ -287,33 +287,68 @@ class Backtester:
         }
         return {"windows": per_window, "summary": summary}
 
-    def load_data(self, days: int) -> dict[str, pd.DataFrame]:
+    def load_data(self, days: int, use_cache: bool = True) -> dict[str, pd.DataFrame]:
+        """Fetch OHLCV for every configured symbol, serving from the on-disk
+        cache when possible. Pass ``use_cache=False`` to force a refresh
+        (e.g. when the universe has just corrected historical rows)."""
+        from .data_cache import OhlcvCache, fetch_with_cache
+
         until = datetime.now(timezone.utc)
         since = until - timedelta(days=days)
         since_ms = int(since.timestamp() * 1000)
         until_ms = int(until.timestamp() * 1000)
         symbols = self.cfg.trading.symbols
         tf = self.cfg.trading.timeframe
+        cache = OhlcvCache() if use_cache else None
         out: dict[str, pd.DataFrame] = {}
-        # For large universes, prefer a single batched download.
-        if hasattr(self.exchange, "fetch_ohlcv_batch") and len(symbols) > 10:
-            log.info("Batch-fetching %d symbols for %d days", len(symbols), days)
+
+        # Split symbols into cache-hit vs needs-fetch so the batch call
+        # only downloads what's actually missing.
+        needs_fetch: list[str] = []
+        if cache is not None:
+            for symbol in symbols:
+                if cache.covers(symbol, tf, since, until):
+                    out[symbol] = cache.read_window(symbol, tf, since, until)
+                else:
+                    needs_fetch.append(symbol)
+            if out:
+                log.info("cache hit for %d/%d symbols", len(out), len(symbols))
+        else:
+            needs_fetch = list(symbols)
+
+        if needs_fetch and hasattr(self.exchange, "fetch_ohlcv_batch") and len(needs_fetch) > 10:
+            log.info("Batch-fetching %d symbols for %d days", len(needs_fetch), days)
             try:
                 limit = max(days + 5, 50)
-                out = self.exchange.fetch_ohlcv_batch(symbols, tf, limit=limit)
+                batch = self.exchange.fetch_ohlcv_batch(needs_fetch, tf, limit=limit)
             except Exception as exc:
                 log.warning("batch fetch failed, falling back per-symbol: %s", exc)
-                out = {}
-        for symbol in symbols:
+                batch = {}
+            for symbol, df in batch.items():
+                if df is None or df.empty:
+                    continue
+                if cache is not None:
+                    cache.write(symbol, tf, df)
+                    out[symbol] = cache.read_window(symbol, tf, since, until)
+                else:
+                    out[symbol] = df
+
+        # Per-symbol fetch for anything the batch path didn't supply.
+        for symbol in needs_fetch:
             if symbol in out and not out[symbol].empty:
                 continue
             log.info("Fetching %s history for %d days", symbol, days)
             try:
-                df = self.exchange.fetch_ohlcv_range(symbol, tf, since_ms, until_ms)
+                if cache is not None:
+                    df = fetch_with_cache(
+                        self.exchange, symbol, tf, since_ms, until_ms, cache,
+                    )
+                else:
+                    df = self.exchange.fetch_ohlcv_range(symbol, tf, since_ms, until_ms)
             except Exception as exc:
                 log.warning("Fetch failed for %s: %s", symbol, exc)
                 continue
-            if df.empty:
+            if df is None or df.empty:
                 log.warning("No data for %s, skipping", symbol)
                 continue
             out[symbol] = df

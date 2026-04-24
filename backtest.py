@@ -25,13 +25,16 @@ STATS_PATH = Path("reports/backtest_stats.json")
               help="Number of equal-sized windows for equity-curve stability stats (0 to skip).")
 @click.option("--walk-forward", type=int, default=0, show_default=True,
               help="If > 1, run a walk-forward backtest with fresh portfolio per window.")
-def main(config_path: str, days: int, no_csv: bool, windows: int, walk_forward: int) -> None:
+@click.option("--no-cache", is_flag=True, default=False,
+              help="Skip the on-disk OHLCV cache and re-download everything.")
+def main(config_path: str, days: int, no_csv: bool, windows: int,
+         walk_forward: int, no_cache: bool) -> None:
     cfg = Config.load(config_path)
     setup_logging(cfg.logging.level)
     bt = build_backtester(cfg)
 
     if walk_forward > 1:
-        data = bt.load_data(days)
+        data = bt.load_data(days, use_cache=not no_cache)
         wf = bt.walk_forward(days=days, n_windows=walk_forward, data=data)
         wtable = Table(title=f"Walk-forward: {walk_forward} windows over {days}d")
         cols = ("window", "start", "end", "total_return_pct", "sharpe", "max_drawdown_pct", "trades")
@@ -43,7 +46,10 @@ def main(config_path: str, days: int, no_csv: bool, windows: int, walk_forward: 
         console().print(json.dumps(wf["summary"], indent=2))
         return
 
-    result = bt.run(days=days, write_csv=not no_csv)
+    result = bt.run(
+        days=days, write_csv=not no_csv,
+        data=bt.load_data(days, use_cache=not no_cache),
+    )
     stats = result.stats(cfg.trading.starting_capital)
     if not no_csv and stats:
         STATS_PATH.parent.mkdir(parents=True, exist_ok=True)
