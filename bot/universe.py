@@ -68,19 +68,19 @@ def _get_url(url: str) -> str:
 
 
 def _extract_symbols(html: str, column_candidates: tuple[str, ...]) -> list[str]:
-    """Parse HTML table and return a normalised list of yfinance tickers."""
+    """Parse HTML table and return a normalised list of yfinance tickers.
+
+    ``pd.read_html`` silently coerces literal "nan" and empty cells to
+    ``float('nan')``. We drop those (via dropna) before stringifying so
+    downstream callers only ever see real ticker strings.
+    """
     tables = pd.read_html(StringIO(html))
     for df in tables:
         for col in column_candidates:
             if col in df.columns:
-                symbols = (
-                    df[col]
-                    .astype(str)
-                    .str.strip()
-                    .str.replace(".", "-", regex=False)
-                    .tolist()
-                )
-                return [s for s in symbols if s and s.lower() != "nan"]
+                cleaned = df[col].dropna().astype(str).str.strip()
+                cleaned = cleaned.str.replace(".", "-", regex=False)
+                return [s for s in cleaned.tolist() if s and s.lower() != "nan"]
     raise RuntimeError(
         f"None of {column_candidates} found in any table on the page"
     )
