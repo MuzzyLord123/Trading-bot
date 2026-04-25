@@ -163,6 +163,60 @@ class BacktestResult:
         return out
 
 
+    def bootstrap_ci(
+        self,
+        n_resamples: int = 2000,
+        confidence: float = 0.90,
+        seed: int | None = 42,
+    ) -> dict[str, float]:
+        """Bootstrap confidence interval for total return.
+
+        Resample the closed-trade P&L series with replacement N times,
+        recompute total return for each resample, and report the
+        ``(1 - confidence)/2`` and ``1 - (1 - confidence)/2`` percentiles
+        plus the median. If the lower percentile is positive, the
+        strategy's edge is statistically distinguishable from "lucky
+        ordering of these specific trades" at the chosen confidence
+        level. If it crosses zero, the headline return is consistent
+        with chance.
+
+        This is the cheapest honest test of "did my backtest get lucky?"
+        It does NOT correct for in-sample parameter tuning - that needs
+        out-of-sample windows (see :meth:`window_stats`,
+        :meth:`Backtester.walk_forward`). It only tells you whether the
+        sequence of trades you got would still have made money if it
+        had happened in a different order.
+
+        Returns a dict with ``lo``, ``median``, ``hi`` (all in %),
+        ``n_resamples``, ``confidence``, plus a boolean ``significant``
+        indicating whether the lower bound is above zero.
+        """
+        pnls = [t["pnl"] for t in self.trades]
+        if len(pnls) < 2:
+            return {
+                "lo": 0.0, "median": 0.0, "hi": 0.0,
+                "n_resamples": 0, "confidence": confidence,
+                "significant": False, "trades": len(pnls),
+            }
+        rng = np.random.default_rng(seed)
+        arr = np.asarray(pnls, dtype=float)
+        # Each resample: pick len(arr) trades with replacement, sum.
+        idx = rng.integers(0, len(arr), size=(n_resamples, len(arr)))
+        resampled_totals = arr[idx].sum(axis=1)
+        alpha = (1.0 - confidence) / 2
+        lo, hi = np.quantile(resampled_totals, [alpha, 1 - alpha])
+        median = float(np.median(resampled_totals))
+        return {
+            "lo": round(float(lo), 2),
+            "median": round(median, 2),
+            "hi": round(float(hi), 2),
+            "n_resamples": n_resamples,
+            "confidence": confidence,
+            "significant": bool(lo > 0),
+            "trades": len(pnls),
+        }
+
+
 def _streaks(pnls: list[float]) -> tuple[int, int]:
     """Longest run of wins and longest run of losses. Zero-PnL counts as a loss."""
     longest_win = longest_loss = 0

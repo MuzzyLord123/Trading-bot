@@ -310,6 +310,17 @@ class TradingEngine:
                 return
             fill_price = order.price or price
             filled_amount = order.amount or amount
+            # Defence in depth. StocksExchange.create_market_order is
+            # supposed to raise when the broker returns a null fill, but
+            # if anything ever reintroduces a zero-fill fallback we'd
+            # rather refuse the position than open with entry_price=0 and
+            # let the next tick blow up the stop math.
+            if fill_price <= 0 or filled_amount <= 0:
+                log.error(
+                    "rejecting phantom fill on %s (price=%.4f filled=%.6f)",
+                    symbol, fill_price, filled_amount,
+                )
+                return
             # Reject a severely under-filled order rather than opening a mis-sized
             # position whose stop/TP were computed for the full amount.
             if filled_amount < amount * 0.95:

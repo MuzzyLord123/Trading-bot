@@ -73,6 +73,24 @@ def main(config_path: str, days: int, no_csv: bool, windows: int,
                                  ("window", "start", "end", "return_pct", "max_drawdown_pct", "sharpe")])
             console().print(wtable)
 
+    # Bootstrap-CI on the trade P&L sequence. Tells you whether the
+    # backtest's headline return is statistically distinguishable from
+    # "lucky ordering of these specific trades". Cheap honest test;
+    # nothing replaces walk-forward, but this is a useful add-on.
+    boot = result.bootstrap_ci(n_resamples=2000, confidence=0.90)
+    if boot["trades"] >= 2:
+        verdict = (
+            "[green]edge survives resampling[/green]" if boot["significant"]
+            else "[yellow]return not distinguishable from luck[/yellow]"
+        )
+        console().print(
+            f"\n[bold]Bootstrap CI[/bold] (90%, {boot['n_resamples']} resamples, "
+            f"{boot['trades']} trades): "
+            f"lo={boot['lo']:+.2f} median={boot['median']:+.2f} hi={boot['hi']:+.2f} "
+            f"{verdict}",
+            markup=True,
+        )
+
     console().print(json.dumps(stats, indent=2))
 
 

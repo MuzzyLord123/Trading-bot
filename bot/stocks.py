@@ -486,14 +486,32 @@ class StocksExchange:
         ticker = self.broker.resolve_ticker(symbol)
         qty = amount if side == "buy" else -abs(amount)
         resp = self.broker.place_market_order(ticker, qty)
+
+        # T212 sometimes returns null for fillPrice / filledQuantity when the
+        # order is queued or partially routed. The previous code defaulted
+        # those to 0.0, which would produce a Position with entry_price=0
+        # (infinite leverage in any subsequent risk math). Treat any
+        # missing-or-zero fill as a failure and let the engine's exception
+        # path log it and skip - we never open a phantom position.
+        fill_price = resp.get("fillPrice")
+        filled_qty = resp.get("filledQuantity")
+        status = str(resp.get("status", "unknown"))
+        if fill_price is None or filled_qty is None or float(fill_price) <= 0 or float(filled_qty) <= 0:
+            raise RuntimeError(
+                f"T212 order for {ticker} returned no usable fill "
+                f"(status={status}, fillPrice={fill_price}, filledQuantity={filled_qty})"
+            )
+
+        fill_price = float(fill_price)
+        filled_qty = abs(float(filled_qty))
         return Order(
             id=str(resp.get("id", "")),
             symbol=symbol,
             side=side,
-            price=float(resp.get("fillPrice") or 0.0),
-            amount=abs(float(resp.get("filledQuantity") or amount)),
-            status=str(resp.get("status", "unknown")),
-            cost=float(resp.get("fillPrice") or 0.0) * abs(float(resp.get("filledQuantity") or amount)),
+            price=fill_price,
+            amount=filled_qty,
+            status=status,
+            cost=fill_price * filled_qty,
             timestamp=int(time.time() * 1000),
         )
 

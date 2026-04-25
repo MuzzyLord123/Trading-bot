@@ -260,3 +260,64 @@ def test_resolve_unknown_symbol_returns_input():
     # Unknown symbols pass through unchanged so T212 can return the
     # canonical "ticker not found" error rather than the bot lying.
     assert broker.resolve_ticker("XYZ123") == "XYZ123"
+
+
+# ---------------------------------------------------------------------------
+# StocksExchange.create_market_order - phantom-fill rejection.
+# ---------------------------------------------------------------------------
+def _stocks_exchange_with_broker(broker):
+    """Build a StocksExchange in 'live' mode with the broker pre-injected,
+    bypassing the live-mode key check."""
+    from bot.config import (
+        Config, ExchangeConfig, TradingConfig, RiskConfig, StrategyConfig,
+        LoggingConfig, NotificationsConfig,
+    )
+    from bot.stocks import StocksExchange
+    cfg = Config(
+        exchange=ExchangeConfig(),
+        trading=TradingConfig(mode="live", symbols=["AAPL"]),
+        risk=RiskConfig(),
+        strategy=StrategyConfig(),
+        logging=LoggingConfig(),
+        notifications=NotificationsConfig(),
+        secrets={"trading212_api_key": "k"},
+    )
+    ex = StocksExchange(cfg)
+    ex.broker = broker
+    return ex
+
+
+def test_create_market_order_raises_when_t212_returns_null_fill_price():
+    """T212 sometimes returns ``fillPrice: null`` for queued orders.
+    Previously we defaulted to 0.0 and opened a phantom position with
+    infinite leverage. Now we raise so the engine refuses the trade."""
+    broker = _make_broker()
+    _seed_instruments(broker, [{"ticker": "AAPL_US_EQ", "shortName": "AAPL"}])
+    bad_response = {"id": "x", "status": "QUEUED", "fillPrice": None, "filledQuantity": 5.0}
+    with patch.object(broker, "place_market_order", return_value=bad_response):
+        ex = _stocks_exchange_with_broker(broker)
+        with pytest.raises(RuntimeError, match="no usable fill"):
+            ex.create_market_order("AAPL", "buy", 5.0)
+
+
+def test_create_market_order_raises_when_filled_quantity_is_zero():
+    broker = _make_broker()
+    _seed_instruments(broker, [{"ticker": "AAPL_US_EQ", "shortName": "AAPL"}])
+    bad_response = {"id": "x", "status": "REJECTED", "fillPrice": 150.0, "filledQuantity": 0}
+    with patch.object(broker, "place_market_order", return_value=bad_response):
+        ex = _stocks_exchange_with_broker(broker)
+        with pytest.raises(RuntimeError, match="no usable fill"):
+            ex.create_market_order("AAPL", "buy", 5.0)
+
+
+def test_create_market_order_succeeds_with_full_response():
+    broker = _make_broker()
+    _seed_instruments(broker, [{"ticker": "AAPL_US_EQ", "shortName": "AAPL"}])
+    good = {"id": "abc123", "status": "FILLED", "fillPrice": 150.5, "filledQuantity": 5.0}
+    with patch.object(broker, "place_market_order", return_value=good):
+        ex = _stocks_exchange_with_broker(broker)
+        order = ex.create_market_order("AAPL", "buy", 5.0)
+    assert order.price == 150.5
+    assert order.amount == 5.0
+    assert order.cost == 150.5 * 5.0
+    assert order.status == "FILLED"
