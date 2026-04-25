@@ -162,7 +162,8 @@ strategy:
   # Indicator periods tuned for hourly stock bars.
   # Any strategy listed in `ensemble.members` can have its params tuned
   # here. Registered names: ma_crossover, rsi_reversion, macd, bollinger,
-  # stochastic, donchian, keltner, cci, obv_trend.
+  # stochastic, donchian, keltner, cci, obv_trend, ichimoku,
+  # parabolic_sar, williams_r, aroon.
   params:
     ma_crossover:
       fast: 8
@@ -199,6 +200,23 @@ strategy:
       ema_period: 20
       lookback: 5
       trend_ema: 50
+    ichimoku:
+      tenkan: 9
+      kijun: 26
+      senkou_b: 52
+      displacement: 26
+    parabolic_sar:
+      step: 0.02
+      max_step: 0.2
+    williams_r:
+      period: 14
+      oversold: -80
+      overbought: -20
+    aroon:
+      period: 25
+      up_threshold: 70
+      down_threshold: 30
+      min_oscillator: 30
 
 logging:
   level: INFO

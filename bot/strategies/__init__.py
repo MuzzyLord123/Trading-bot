@@ -3,18 +3,22 @@ from __future__ import annotations
 from typing import Any
 
 from .base import Signal, Strategy, StrategyContext
+from .aroon import AroonStrategy
 from .bollinger import BollingerStrategy
 from .cci import CciStrategy
 from .donchian import DonchianStrategy
 from .ensemble import EnsembleStrategy
 from .filtered import FilteredStrategy
+from .ichimoku import IchimokuStrategy
 from .keltner import KeltnerStrategy
 from .ma_crossover import MaCrossoverStrategy
 from .macd import MacdStrategy
 from .multi_timeframe import MultiTimeframeStrategy
 from .obv_trend import ObvTrendStrategy
+from .parabolic_sar import ParabolicSarStrategy
 from .rsi_reversion import RsiReversionStrategy
 from .stochastic import StochasticStrategy
+from .williams_r import WilliamsRStrategy
 
 _REGISTRY: dict[str, type[Strategy]] = {
     "ma_crossover": MaCrossoverStrategy,
@@ -26,6 +30,10 @@ _REGISTRY: dict[str, type[Strategy]] = {
     "keltner": KeltnerStrategy,
     "cci": CciStrategy,
     "obv_trend": ObvTrendStrategy,
+    "ichimoku": IchimokuStrategy,
+    "parabolic_sar": ParabolicSarStrategy,
+    "williams_r": WilliamsRStrategy,
+    "aroon": AroonStrategy,
     "ensemble": EnsembleStrategy,
 }
 
@@ -125,6 +133,10 @@ __all__ = [
     "KeltnerStrategy",
     "CciStrategy",
     "ObvTrendStrategy",
+    "IchimokuStrategy",
+    "ParabolicSarStrategy",
+    "WilliamsRStrategy",
+    "AroonStrategy",
     "EnsembleStrategy",
     "FilteredStrategy",
     "MultiTimeframeStrategy",
