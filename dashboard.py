@@ -1000,6 +1000,110 @@ with backtest_tab:
         st.dataframe(tr_bt.sort_values("timestamp", ascending=False),
                      use_container_width=True, hide_index=True)
 
+    # ----- Compare strategies (walk-forward) ---------------------------
+    st.markdown("---")
+    st.subheader("Compare strategies (walk-forward)")
+    st.caption(
+        "Runs six pre-built trading philosophies through the walk-forward "
+        "harness on **your configured universe** and ranks them by "
+        "**stability**, not headline return. Stability = how many windows "
+        "were profitable, then how shallow the worst-window drawdown was. "
+        "Picking the highest-return preset would be curve-fitting; picking "
+        "the most consistent one is the closest thing to an honest answer "
+        "to 'which config should I use?'"
+    )
+    cmp_col1, cmp_col2, cmp_col3 = st.columns([1, 1, 2])
+    with cmp_col1:
+        cmp_days = st.number_input(
+            "Days", min_value=90, max_value=730, value=365, step=30,
+            key="cmp_days",
+            help="Length of the historical window per evaluation. 365 days "
+                 "is the default; shorter windows risk being unrepresentative.",
+        )
+    with cmp_col2:
+        cmp_windows = st.number_input(
+            "Windows", min_value=2, max_value=12, value=4, step=1,
+            key="cmp_windows",
+            help="Number of non-overlapping walk-forward windows. More "
+                 "windows = stronger consistency signal but each window "
+                 "covers less history.",
+        )
+    with cmp_col3:
+        st.caption(
+            "Each preset takes 30-90 seconds depending on universe size. "
+            "Six presets sequentially, so allow a few minutes."
+        )
+
+    if st.button("Compare strategies", type="primary",
+                 help="Runs scripts/recommend_config.py-equivalent inline. "
+                      "Does NOT modify config.yaml. Read the table, decide, "
+                      "edit Config tab manually if you want to adopt the winner."):
+        try:
+            from scripts.recommend_config import PRESETS, _evaluate, _rank
+            from bot.config import Config as _Config
+            base_cfg = _Config.load(CONFIG_PATH)
+        except Exception as exc:
+            st.error(f"Could not load base config: {exc}")
+        else:
+            results: list[dict[str, Any]] = []
+            with st.status(
+                f"Comparing {len(PRESETS)} presets over {cmp_days}d in {cmp_windows} windows…",
+                expanded=True,
+            ) as status:
+                for preset in PRESETS:
+                    st.write(f"Evaluating **{preset.key}**…")
+                    results.append(_evaluate(preset, base_cfg, int(cmp_days), int(cmp_windows)))
+                status.update(label="Comparison complete", state="complete")
+
+            ranked = _rank(results)
+            if not ranked or "error" in ranked[0]:
+                st.error("All presets failed to evaluate. Check the universe "
+                         "and yfinance connectivity.")
+                if ranked and "error" in ranked[0]:
+                    st.code(ranked[0]["error"])
+            else:
+                rows = []
+                for i, r in enumerate(ranked, start=1):
+                    if "error" in r:
+                        rows.append({
+                            "Rank": i, "Preset": r.get("preset", "?"),
+                            "Description": "ERROR: " + r["error"][:60],
+                            "Profitable windows": "-", "Worst window %": "-",
+                            "Avg Sharpe": "-", "Avg return %": "-",
+                            "Avg trades": "-",
+                        })
+                        continue
+                    rows.append({
+                        "Rank": i,
+                        "Preset": r["preset"],
+                        "Description": r["description"][:90],
+                        "Profitable windows": f"{r['profitable_windows']}/{r['n_windows']}",
+                        "Worst window %": f"{r['worst_return_pct']:+.2f}",
+                        "Avg Sharpe": f"{r['avg_sharpe']:.2f}",
+                        "Avg return %": f"{r['avg_return_pct']:+.2f}",
+                        "Avg trades": f"{r['trades_avg']:.1f}",
+                    })
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+                winner = ranked[0]
+                consistency = winner["profitable_windows"] / max(1, winner["n_windows"])
+                st.success(
+                    f"**Recommendation: `{winner['preset']}`** — "
+                    f"{winner['profitable_windows']}/{winner['n_windows']} profitable "
+                    f"windows ({consistency:.0%}), worst window "
+                    f"{winner['worst_return_pct']:+.2f}%, avg Sharpe "
+                    f"{winner['avg_sharpe']:.2f}, headline return "
+                    f"{winner['avg_return_pct']:+.2f}%/window."
+                )
+                st.warning(
+                    "**This does not adopt the preset.** It tells you which "
+                    "philosophy held up best on the last "
+                    f"{cmp_days} days. Markets change; re-run quarterly. "
+                    "To adopt, copy the preset's config from "
+                    "`scripts/recommend_config.py` into your `config.yaml` "
+                    "by hand and restart the bot."
+                )
+
 
 # -------------------------- Settings tab -------------------------------
 with settings_tab:
