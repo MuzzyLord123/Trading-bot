@@ -46,6 +46,19 @@ def sell_fill(price: float, amount: float, risk_cfg: RiskConfig) -> Fill:
     return Fill(price=fill_price, amount=amount, fee_cost=fee_cost)
 
 
+def actual_fill(price: float, amount: float, risk_cfg: RiskConfig) -> Fill:
+    """Wrap a real broker fill (already-realised price + amount) into a
+    :class:`Fill` with the modelled fee cost layered on.
+
+    Use this in live mode where the broker has told us the true fill
+    price - we don't want to double-apply our slippage model on top.
+    Backtest and paper mode should use :func:`buy_fill` / :func:`sell_fill`
+    which add slippage to a notional reference price.
+    """
+    fee_cost = price * amount * risk_cfg.taker_fee_pct
+    return Fill(price=price, amount=amount, fee_cost=fee_cost)
+
+
 def realised_pnl(entry_price: float, fill: Fill) -> float:
     """PnL for closing ``fill.amount`` of a long at ``fill.price`` net of fees."""
     return (fill.price - entry_price) * fill.amount - fill.fee_cost

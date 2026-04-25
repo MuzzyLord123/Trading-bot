@@ -5,22 +5,8 @@ import pandas as pd
 
 from ..indicators import adx, atr, ema, supertrend
 from ..news_stocks import days_until_earnings, is_bearish_gap
+from ._helpers import resample_ohlcv
 from .base import Signal, Strategy, StrategyContext
-
-
-def _resample_htf(df: pd.DataFrame, rule: str) -> pd.DataFrame:
-    """Resample an OHLCV frame to a higher timeframe."""
-    idx = df.set_index("timestamp")
-    out = pd.DataFrame(
-        {
-            "open": idx["open"].resample(rule).first(),
-            "high": idx["high"].resample(rule).max(),
-            "low": idx["low"].resample(rule).min(),
-            "close": idx["close"].resample(rule).last(),
-            "volume": idx["volume"].resample(rule).sum(),
-        }
-    ).dropna()
-    return out.reset_index()
 
 
 class FilteredStrategy(Strategy):
@@ -110,7 +96,7 @@ class FilteredStrategy(Strategy):
                 return Signal.FLAT
 
         if self.htf_rule:
-            htf = _resample_htf(df, self.htf_rule)
+            htf = resample_ohlcv(df, self.htf_rule)
             if len(htf) < self.htf_ema + 2:
                 return Signal.FLAT
             htf_trend = ema(htf["close"], self.htf_ema).iloc[-1]

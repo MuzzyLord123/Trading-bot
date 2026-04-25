@@ -45,7 +45,11 @@ def _read_earnings_cache(symbol: str) -> pd.DataFrame | None:
         return None
     try:
         data = json.loads(path.read_text())
-    except Exception:
+    except (OSError, json.JSONDecodeError) as exc:
+        # Cache file should be well-formed JSON the previous run wrote;
+        # corruption usually means a partial write across process death.
+        # Log so we know to investigate, then fall back to a fresh fetch.
+        log.warning("earnings cache at %s unreadable: %s", path, exc)
         return None
     if not data:
         return pd.DataFrame(columns=["date"])

@@ -21,9 +21,14 @@ the lower-timeframe noise (RSI reversion, bollinger, stochastic, CCI).
 """
 from __future__ import annotations
 
+import logging
+
 import pandas as pd
 
+from ._helpers import resample_ohlcv
 from .base import Signal, Strategy, StrategyContext
+
+log = logging.getLogger("bot.strategies.multi_timeframe")
 
 
 _HTF_RULES = {
@@ -35,21 +40,6 @@ _HTF_RULES = {
     "60m": "1D",
     "1d": "1W",
 }
-
-
-def _resample_htf(df: pd.DataFrame, rule: str) -> pd.DataFrame:
-    """Resample an OHLCV frame to a higher timeframe. Identical rules to
-    bot/strategies/filtered.py - duplicated here to avoid a cross-module
-    import cycle since FilteredStrategy may wrap us in turn."""
-    idx = df.set_index("timestamp")
-    out = pd.DataFrame({
-        "open": idx["open"].resample(rule).first(),
-        "high": idx["high"].resample(rule).max(),
-        "low": idx["low"].resample(rule).min(),
-        "close": idx["close"].resample(rule).last(),
-        "volume": idx["volume"].resample(rule).sum(),
-    }).dropna()
-    return out.reset_index()
 
 
 class MultiTimeframeStrategy(Strategy):
@@ -92,8 +82,12 @@ class MultiTimeframeStrategy(Strategy):
             return sig
 
         try:
-            htf_df = _resample_htf(df, rule)
-        except Exception:
+            htf_df = resample_ohlcv(df, rule)
+        except Exception as exc:
+            # Resample is deterministic - failure means a bad rule string
+            # (e.g. "3z") slipped past validation. Log so the operator
+            # can fix the config rather than silently never entering.
+            log.warning("HTF resample with rule %r failed: %s", rule, exc)
             return Signal.FLAT
         if len(htf_df) < self.inner.min_history():
             return Signal.FLAT

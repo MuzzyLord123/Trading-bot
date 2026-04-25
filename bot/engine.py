@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from rich.table import Table
 
 from .config import Config
-from .execution import buy_fill, sell_fill
+from .execution import actual_fill, buy_fill, sell_fill
 from .factory import build_exchange
 from .logger import CsvLogger, console
 from .notifications import DesktopNotifier, MultiNotifier, NullNotifier, TelegramNotifier
@@ -330,7 +330,7 @@ class TradingEngine:
                 )
                 return
             amount = filled_amount
-            fee_cost = fill_price * amount * self.cfg.risk.taker_fee_pct
+            fee_cost = actual_fill(fill_price, amount, self.cfg.risk).fee_cost
         else:
             fill = buy_fill(price, amount, self.cfg.risk)
             fill_price, fee_cost = fill.price, fill.fee_cost
@@ -387,7 +387,7 @@ class TradingEngine:
                 return
             fill_price = order.price or price
             partial = order.amount or partial
-            fee_cost = fill_price * partial * self.cfg.risk.taker_fee_pct
+            fee_cost = actual_fill(fill_price, partial, self.cfg.risk).fee_cost
         else:
             fill = sell_fill(price, partial, self.cfg.risk)
             fill_price, fee_cost = fill.price, fill.fee_cost
@@ -431,7 +431,7 @@ class TradingEngine:
                 log.error("live close failed for %s: %s", pos.symbol, exc)
                 return
             fill_price = order.price or price
-            fee_cost = fill_price * amount * self.cfg.risk.taker_fee_pct
+            fee_cost = actual_fill(fill_price, amount, self.cfg.risk).fee_cost
         else:
             fill = sell_fill(price, amount, self.cfg.risk)
             fill_price, fee_cost = fill.price, fill.fee_cost
