@@ -283,37 +283,69 @@ exchange_name = "Trading 212"
 
 with st.sidebar:
     st.markdown("### Trading Bot")
+
+    # Live status pill - one glance and you know if the bot is running.
     equity_df = load_equity()
     if not equity_df.empty:
         last_seen = equity_df["timestamp"].iloc[-1]
         age = datetime.now(timezone.utc) - last_seen.to_pydatetime()
         if age < timedelta(minutes=5):
-            st.success(f"Bot active\n\nLast tick: {int(age.total_seconds())}s ago")
+            st.success(
+                f"Active · last tick {int(age.total_seconds())}s ago",
+                icon=None,
+            )
         elif age < timedelta(hours=1):
-            st.warning(f"Stale\n\nLast tick: {int(age.total_seconds() / 60)} min ago")
+            st.warning(f"Stale · last tick {int(age.total_seconds() / 60)} min ago")
         else:
-            st.error(f"Bot offline\n\nLast tick: {age.days}d {age.seconds // 3600}h ago")
+            st.error(f"Offline · last tick {age.days}d {age.seconds // 3600}h ago")
     else:
-        st.info("No equity log — bot hasn't run yet.")
+        st.info("Bot has not run yet. Start it with `python run.py`.")
 
     st.markdown("---")
-    st.caption(f"**Mode:** {mode}")
-    st.caption(f"**Exchange:** {exchange_name}")
+    st.markdown("**At a glance**")
     symbols = cfg.get("trading", {}).get("symbols", [])
-    st.caption(f"**Universe:** {len(symbols)} symbols")
+    st.caption(f"Mode: **{mode}** · Exchange: **{exchange_name}**")
+    st.caption(f"Universe: **{len(symbols)}** symbols")
+    st.caption(f"Starting capital: **{format_currency(starting_capital, ccy)}**")
 
     st.markdown("---")
-    if st.button("Refresh data", use_container_width=True):
+    st.markdown("**Quick actions**")
+    qa_cols = st.columns(2)
+    if qa_cols[0].button("Refresh", use_container_width=True,
+                         help="Reload all CSV / state caches and rerun the page."):
         st.cache_data.clear()
+        st.rerun()
+    if qa_cols[1].button("Reset caches", use_container_width=True,
+                         help="Delete on-disk yfinance and news caches; the next "
+                              "backtest or news refresh will re-fetch from source."):
+        from pathlib import Path as _P
+        for sub in ("ohlcv", "news"):
+            d = ROOT / "cache" / sub
+            if d.exists():
+                for f in d.rglob("*"):
+                    if f.is_file():
+                        f.unlink(missing_ok=True)
+        st.cache_data.clear()
+        st.toast("Caches cleared.")
         st.rerun()
 
     auto_refresh = st.toggle(
         "Auto-refresh", value=False,
-        help="Re-runs the page on an interval so the Overview tab stays live.",
+        help="Re-run the page on an interval so the Overview tab stays live.",
     )
     refresh_interval = st.slider(
         "Interval (seconds)", min_value=5, max_value=120, value=15, step=5,
         disabled=not auto_refresh,
+    )
+
+    st.markdown("---")
+    st.markdown("**Tools**")
+    st.caption(
+        "Run from the terminal:\n"
+        "- `python scripts/check_t212.py` - verify your API key\n"
+        "- `python scripts/recommend_config.py` - compare strategies\n"
+        "- `python backtest.py --walk-forward 4` - out-of-sample report\n"
+        "- `python run.py` - start paper / live trading"
     )
 
     st.markdown("---")
@@ -322,14 +354,57 @@ with st.sidebar:
         "Backtest runs use the saved config immediately."
     )
 
-st.title("Trading Bot Dashboard")
-st.caption(f"Running on **{exchange_name}** in **{mode}** mode")
 
-tabs = st.tabs(["Overview", "Trades", "Config", "News", "Backtest", "Settings"])
+# ---------------------------------------------------------------------------
+# Header: title + mode pill + first-run guidance.
+# ---------------------------------------------------------------------------
+mode_color = {"PAPER": "#2d8a4f", "LIVE": "#a02c2c"}.get(mode, "#3a3f47")
+mode_label = "LIVE TRADING" if mode == "LIVE" else f"{mode} MODE"
+st.markdown(
+    f"""
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:0.5rem;">
+      <h1 style="margin:0;">Trading Bot Dashboard</h1>
+      <span style="background:{mode_color};color:white;padding:4px 10px;
+                   border-radius:12px;font-size:0.78rem;font-weight:600;
+                   letter-spacing:0.05em;">{mode_label}</span>
+    </div>
+    <div style="color:#8b949e;margin-bottom:1.2rem;">
+      Trading 212 · {len(symbols)} symbols · {format_currency(starting_capital, ccy)} starting capital
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# First-run guidance: if no config or no equity log yet, show actionable
+# steps in a banner so newcomers don't stare at empty tables and wonder
+# what to do.
+if not cfg:
+    st.warning(
+        "**No config.yaml found.** "
+        "Copy `config.example.yaml` to `config.yaml`, edit it (start with "
+        "`mode: paper`), then run `python run.py` to start the bot.",
+        icon=None,
+    )
+elif equity_df.empty:
+    st.info(
+        "**Welcome.** Your config is loaded but the bot hasn't run yet. "
+        "Open the Backtest tab to validate the strategy on history, or run "
+        "`python run.py` from the terminal to start paper trading. "
+        "This dashboard updates automatically once the bot starts writing logs.",
+        icon=None,
+    )
+
+# Tabs in workflow order: see (Overview) -> what happened (Trades) ->
+# why (News) -> tune (Backtest) -> change (Config) -> auth (Settings).
+# Bound to named variables so re-ordering above doesn't break the body
+# below; the body only references the names.
+overview_tab, trades_tab, news_tab, backtest_tab, config_tab, settings_tab = st.tabs(
+    ["Overview", "Trades", "News", "Backtest", "Config", "Settings"]
+)
 
 
 # -------------------------- Overview tab ---------------------------------
-with tabs[0]:
+with overview_tab:
     trades = load_trades()
     equity = load_equity()
     stats = pnl_stats(trades)
@@ -363,39 +438,61 @@ with tabs[0]:
 
     col_l, col_r = st.columns([3, 1])
     with col_l:
-        st.subheader("Equity curve")
+        st.subheader(
+            "Equity curve",
+            help="Account equity over time. Each point is a tick where the "
+                 "engine wrote a snapshot. Flat sections are usually market-"
+                 "closed periods.",
+        )
         if not equity.empty:
             chart_df = equity.set_index("timestamp")[["equity"]]
             st.line_chart(chart_df, height=340)
         else:
-            st.info("No equity history yet. The chart populates once the bot runs.")
+            st.info(
+                "Equity curve appears once the bot starts ticking. "
+                "Run `python run.py` from the terminal to start paper trading, "
+                "or open the **Backtest** tab to validate the strategy on history first."
+            )
 
     with col_r:
-        st.subheader("P&L stats")
+        st.subheader(
+            "P&L stats",
+            help="Realised P&L from closed trades only. Open positions are "
+                 "shown below with live unrealised P&L.",
+        )
         if stats["count"]:
             st.metric("Best trade", format_currency(stats["best"], ccy))
             st.metric("Worst trade", format_currency(stats["worst"], ccy))
             st.metric("Avg per trade", format_currency(stats["avg_pnl"], ccy))
         else:
-            st.caption("No closed trades yet.")
+            st.caption("No closed trades yet — see Trades tab once the bot has fills.")
 
     st.markdown("---")
 
     col_a, col_b = st.columns(2)
     with col_a:
-        st.subheader("Recent trades")
+        st.subheader(
+            "Recent trades",
+            help="Last 12 events from logs/trades.csv. See the Trades tab "
+                 "for the full history with per-symbol breakdown.",
+        )
         if trades.empty:
-            st.caption("No trades yet.")
+            st.caption("No trades yet — recent fills will appear here once the bot runs.")
         else:
             recent = trades.tail(12).iloc[::-1]
             st.dataframe(recent, use_container_width=True, hide_index=True, height=360)
 
     with col_b:
-        st.subheader("Open positions")
+        st.subheader(
+            "Open positions",
+            help="Read live from state/portfolio.json (the engine's "
+                 "authoritative snapshot). Prices are pulled fresh from "
+                 "Yahoo Finance and cached for 60s.",
+        )
         state = load_state()
         positions = state.get("positions") or []
         if not positions:
-            st.caption("No open positions.")
+            st.caption("No open positions — entries will appear here as the engine fills them.")
         else:
             # Live-price every currently held symbol in one batched
             # yfinance call, then derive unrealised P&L locally.
@@ -440,17 +537,28 @@ with tabs[0]:
 
 
 # -------------------------- Trades tab -----------------------------------
-with tabs[1]:
+with trades_tab:
     trades = load_trades()
     if trades.empty:
-        st.info("No trade history yet. Run the bot in paper or live mode to populate this.")
+        st.info(
+            "No trades logged yet. The trade log populates as the engine "
+            "opens and closes positions. To get started:\n\n"
+            "- Open the **Backtest** tab to dry-run the strategy on history.\n"
+            "- Run `python run.py` to start paper trading on live prices.\n"
+            "- Once trading.mode is set to `live` (Settings tab) the bot "
+            "starts placing real orders on Trading 212."
+        )
     else:
         stats = pnl_stats(trades)
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Total closed", stats["count"])
-        col2.metric("Win rate", f"{stats['win_rate']:.1f}%")
-        col3.metric("Total P&L", format_currency(stats["total_pnl"], ccy))
-        col4.metric("Avg per trade", format_currency(stats["avg_pnl"], ccy))
+        col1.metric("Total closed", stats["count"],
+                    help="Number of round-trip trades the bot has completed.")
+        col2.metric("Win rate", f"{stats['win_rate']:.1f}%",
+                    help="Percentage of closed trades with positive P&L.")
+        col3.metric("Total P&L", format_currency(stats["total_pnl"], ccy),
+                    help="Sum of P&L across all closed trades, net of fees and slippage.")
+        col4.metric("Avg per trade", format_currency(stats["avg_pnl"], ccy),
+                    help="Mean P&L per closed trade. Useful for sizing future trades.")
 
         st.markdown("---")
 
@@ -528,7 +636,7 @@ def _run_backtest_subprocess(days: int = 365) -> tuple[bool, str]:
     return result.returncode == 0, BACKTEST_LOG.read_text()[-4000:]
 
 
-with tabs[2]:
+with config_tab:
     if not cfg:
         st.error(
             "No config.yaml found. Copy config.example.yaml to config.yaml to begin."
@@ -701,7 +809,7 @@ with tabs[2]:
 
 
 # -------------------------- News tab ------------------------------------
-with tabs[3]:
+with news_tab:
     st.subheader("Company news")
     symbols = list((cfg or {}).get("trading", {}).get("symbols", []))
     # Expand universe tokens (SP500 / NASDAQ100) exactly like the bot does so
@@ -804,16 +912,28 @@ with tabs[3]:
 
 
 # -------------------------- Backtest tab --------------------------------
-with tabs[4]:
+with backtest_tab:
     st.subheader("Latest backtest")
+    st.caption(
+        "Replays the strategy in your **current** config against historical "
+        "yfinance data and writes the equity curve and trade log to "
+        "`reports/`. Edit strategy / risk settings on the Config tab and "
+        "rerun here to compare."
+    )
     eq_bt = read_csv(BACKTEST_EQUITY)
     tr_bt = read_csv(BACKTEST_TRADES)
 
     col1, col2 = st.columns([1, 3])
     with col1:
-        quick_days = st.number_input("Days", min_value=30, max_value=730,
-                                     value=365, step=30, key="quick_days")
-        if st.button("Run backtest", use_container_width=True, type="primary"):
+        quick_days = st.number_input(
+            "Days", min_value=30, max_value=730, value=365, step=30,
+            key="quick_days",
+            help="Length of the historical window. yfinance caps hourly bars "
+                 "at 730 days.",
+        )
+        if st.button("Run backtest", use_container_width=True, type="primary",
+                     help="Spawns `python backtest.py --days N` as a subprocess. "
+                          "Results overwrite reports/backtest_*.csv."):
             with st.status(f"Running {quick_days}-day backtest…", expanded=True) as status:
                 ok, tail = _run_backtest_subprocess(days=int(quick_days))
                 if ok:
@@ -882,7 +1002,7 @@ with tabs[4]:
 
 
 # -------------------------- Settings tab -------------------------------
-with tabs[5]:
+with settings_tab:
     st.subheader("API keys")
     st.caption(
         "Stored in .env (gitignored). Required for live trading only. "
