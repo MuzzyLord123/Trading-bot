@@ -35,11 +35,20 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 
 def _is_transient_http(exc: BaseException) -> bool:
-    """Retry HTTPError only on 429 and 5xx. 4xx client errors (bad order,
-    insufficient funds, invalid ticker) won't heal on retry and retrying
-    them just hides the real error and wastes T212 rate budget.
-    Connection errors / timeouts are always retried.
+    """Retry only on errors that might heal on a second try: 429 (rate
+    limit), 5xx (server-side glitch), or transport errors (network
+    flake, timeout). Definitive 4xx client errors - bad order, invalid
+    ticker, insufficient funds - won't heal on retry; retrying them
+    just delays the real failure and burns T212 rate budget.
+
+    Operates on both the underlying HTTPError (what urlopen raises) and
+    our typed T212APIError wrapper so the predicate works whether
+    tenacity is wrapping the raw call or the wrapped one.
     """
+    # Lazy reference - T212APIError is defined further down in this module.
+    from_t212 = isinstance(exc, T212APIError) if "T212APIError" in globals() else False
+    if from_t212:
+        return exc.status == 429 or exc.status >= 500
     if isinstance(exc, urllib.error.HTTPError):
         return exc.code == 429 or exc.code >= 500
     if isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError)):
@@ -230,6 +239,52 @@ T212_LIVE_BASE = "https://live.trading212.com/api/v0"
 T212_DEMO_BASE = "https://demo.trading212.com/api/v0"
 
 
+class T212APIError(RuntimeError):
+    """A Trading 212 API call returned a non-2xx status.
+
+    Wraps the original ``urllib.error.HTTPError`` so callers can branch
+    on status code without re-parsing the response body. T212 returns a
+    JSON error envelope on most failures; the body is stored verbatim
+    so downstream logging or the dashboard can surface the actual
+    error code from T212 (e.g. "InsufficientResources",
+    "BusinessLogicError", "NotFound").
+    """
+
+    def __init__(
+        self,
+        method: str,
+        path: str,
+        status: int,
+        body: str = "",
+        original: BaseException | None = None,
+    ) -> None:
+        msg = f"T212 {method} {path} -> {status}"
+        if body:
+            msg += f" {body[:200]}"
+        super().__init__(msg)
+        self.method = method
+        self.path = path
+        self.status = status
+        self.body = body
+        self.original = original
+
+    @property
+    def is_auth_error(self) -> bool:
+        return self.status in (401, 403)
+
+    @property
+    def is_rate_limited(self) -> bool:
+        return self.status == 429
+
+    @property
+    def is_client_error(self) -> bool:
+        return 400 <= self.status < 500
+
+    @property
+    def is_server_error(self) -> bool:
+        return 500 <= self.status < 600
+
+
 @dataclass
 class T212Position:
     ticker: str
@@ -260,6 +315,10 @@ class Trading212Broker:
         stop=stop_after_attempt(4),
         wait=wait_exponential(multiplier=1, min=2, max=16),
         retry=retry_if_exception(_is_transient_http),
+        # When tenacity gives up, raise the original (typed) T212APIError
+        # rather than wrapping it in a RetryError. Engines further up the
+        # stack want to branch on .status / .is_auth_error / .is_rate_limited.
+        reraise=True,
     )
     def _request(self, method: str, path: str, body: dict[str, Any] | None = None) -> Any:
         # Soft rate-limit: space requests out to avoid 429s.
@@ -286,30 +345,66 @@ class Trading212Broker:
         except urllib.error.HTTPError as exc:
             body_text = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
             log.error("T212 %s %s -> %s %s", method, path, exc.code, body_text[:400])
-            raise
+            raise T212APIError(
+                method=method, path=path, status=exc.code,
+                body=body_text, original=exc,
+            ) from exc
 
     def load_instruments(self) -> list[dict[str, Any]]:
-        """Fetch and cache the full instrument catalogue."""
+        """Fetch and cache the full instrument catalogue plus a multi-key
+        lookup map keyed by every plausible alias for each instrument.
+        """
         if self._instruments is None:
             data = self._request("GET", "/equity/metadata/instruments")
             self._instruments = data or []
-            # Build a short-name -> T212 ticker map.
             for inst in self._instruments:
-                ticker = inst.get("ticker", "")
-                short = inst.get("shortName") or ticker.split("_")[0]
-                self._ticker_map.setdefault(short.upper(), ticker)
-                self._ticker_map.setdefault(ticker.upper(), ticker)
+                self._index_instrument(inst)
         return self._instruments or []
 
+    def _index_instrument(self, inst: dict[str, Any]) -> None:
+        """Add every plausible alias for an instrument to the ticker map.
+
+        T212's tickers are like AAPL_US_EQ (US listings) or VWRLl_EQ
+        (LSE listings - the trailing lowercase letter encodes the venue).
+        Yahoo Finance writes those as AAPL and VWRL.L respectively.
+        Indexing both the T212 ticker and a derived yfinance-equivalent
+        means a config that lists either form resolves correctly.
+
+        All lookup keys are upper-cased on insert; resolve_ticker also
+        upper-cases on lookup, so case differences cannot cause misses.
+        """
+        ticker = inst.get("ticker", "")
+        if not ticker:
+            return
+        upper = ticker.upper()
+        self._ticker_map.setdefault(upper, ticker)
+
+        short = (inst.get("shortName") or "").upper()
+        if short:
+            self._ticker_map.setdefault(short, ticker)
+
+        # Derive a yfinance-style alias from the T212 ticker.
+        # AAPL_US_EQ -> AAPL
+        # VWRLl_EQ -> VWRL.L  (trailing lowercase letter = LSE)
+        body = ticker.split("_", 1)[0]
+        if body and body[-1].islower():
+            yf_alias = f"{body[:-1].upper()}.L"
+        else:
+            yf_alias = body.upper()
+        if yf_alias:
+            self._ticker_map.setdefault(yf_alias, ticker)
+
     def resolve_ticker(self, symbol: str) -> str:
-        """Map a yfinance-style symbol (AAPL, VWRL.L) to a T212 ticker."""
+        """Map a yfinance-style symbol (AAPL, VWRL.L) to a T212 ticker.
+
+        Falls back to the input symbol if no match exists - the caller may
+        have passed the T212 ticker directly. ``place_market_order`` will
+        get a clean rejection from T212 either way if the ticker is bad.
+        """
         self.load_instruments()
-        key = symbol.upper().replace(".L", "l").replace(".", "")
-        # Try full symbol first (yfinance style), then stripped.
-        for candidate in (symbol.upper(), symbol.upper().replace(".L", "l"), key):
-            if candidate in self._ticker_map:
-                return self._ticker_map[candidate]
-        # Fallback: assume caller passed the T212 ticker directly.
+        candidate = symbol.upper().strip()
+        if candidate in self._ticker_map:
+            return self._ticker_map[candidate]
         return symbol
 
     def cash(self) -> float:
