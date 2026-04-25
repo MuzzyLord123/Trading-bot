@@ -227,12 +227,21 @@ def _materialise(base: Config, preset: Preset) -> Config:
     )
 
 
-def _evaluate(preset: Preset, base: Config, days: int, n_windows: int) -> dict[str, Any]:
-    """Run walk-forward on one preset, return summary stats."""
+def _evaluate(
+    preset: Preset, base: Config, days: int, n_windows: int,
+    parallel_windows: bool = False,
+) -> dict[str, Any]:
+    """Run walk-forward on one preset, return summary stats.
+
+    ``parallel_windows`` parallelises the windows of THIS preset's
+    walk-forward. When called by :func:`evaluate_presets_parallel`, we
+    leave it False so the outer parallelism (presets) doesn't oversubscribe
+    the CPU - one level of process pool is enough.
+    """
     cfg = _materialise(base, preset)
     bt = build_backtester(cfg)
     try:
-        wf = bt.walk_forward(days=days, n_windows=n_windows)
+        wf = bt.walk_forward(days=days, n_windows=n_windows, parallel=parallel_windows)
     except Exception as exc:
         return {"error": str(exc)}
 
@@ -254,6 +263,70 @@ def _evaluate(preset: Preset, base: Config, days: int, n_windows: int) -> dict[s
             sum(w.get("trades", 0) for w in windows) / max(1, len(windows))
         ),
     }
+
+
+def _evaluate_preset_worker(args: tuple[Preset, Config, int, int]) -> dict[str, Any]:
+    """Module-level worker for ProcessPoolExecutor. Imports happen
+    inside the worker process the first time it's used so the parent
+    doesn't pay the import cost twice."""
+    preset, base, days, n_windows = args
+    return _evaluate(preset, base, days, n_windows, parallel_windows=False)
+
+
+def evaluate_presets(
+    presets: list[Preset],
+    base: Config,
+    days: int,
+    n_windows: int,
+    parallel: bool = False,
+    max_workers: int | None = None,
+    progress: callable | None = None,
+) -> list[dict[str, Any]]:
+    """Evaluate every preset and return a list of result dicts in the
+    same order. Set ``parallel=True`` to run presets concurrently in a
+    process pool - this is the big speedup, since each preset's
+    walk-forward is fully independent of the others.
+
+    ``progress`` is an optional callable invoked with each preset key
+    as evaluation starts (or completes, in parallel mode), so a UI
+    can render a "now running X" indicator without us caring about
+    Streamlit specifics here.
+    """
+    if not parallel or len(presets) <= 1:
+        out: list[dict[str, Any]] = []
+        for p in presets:
+            if progress:
+                progress(p.key)
+            out.append(_evaluate(p, base, days, n_windows))
+        return out
+
+    try:
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+    except ImportError:
+        return evaluate_presets(presets, base, days, n_windows, parallel=False, progress=progress)
+
+    results_by_key: dict[str, dict[str, Any]] = {}
+    try:
+        with ProcessPoolExecutor(max_workers=max_workers) as pool:
+            future_to_key = {
+                pool.submit(_evaluate_preset_worker, (p, base, days, n_windows)): p.key
+                for p in presets
+            }
+            for fut in as_completed(future_to_key):
+                key = future_to_key[fut]
+                try:
+                    results_by_key[key] = fut.result()
+                except Exception as exc:
+                    results_by_key[key] = {"preset": key, "error": str(exc)}
+                if progress:
+                    progress(key)
+    except Exception:
+        # Sandbox or platform refused to spawn - fall back to serial so
+        # the caller still gets results, just slower.
+        return evaluate_presets(presets, base, days, n_windows, parallel=False, progress=progress)
+
+    # Preserve the input ordering even though completion order was arbitrary.
+    return [results_by_key.get(p.key, {"preset": p.key, "error": "no result"}) for p in presets]
 
 
 def _rank(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -287,7 +360,14 @@ def _rank(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
               help="Number of equal-sized walk-forward windows.")
 @click.option("--only", type=str, default=None,
               help="Comma-separated list of preset keys to evaluate (default: all).")
-def main(config_path: str, days: int, windows: int, only: str | None) -> None:
+@click.option("--parallel/--no-parallel", default=True,
+              help="Evaluate presets concurrently in a process pool. "
+                   "Roughly Nx faster on N cores; falls back to serial if "
+                   "the platform refuses to spawn workers.")
+@click.option("--workers", type=int, default=None,
+              help="Override the worker count (default: one per CPU).")
+def main(config_path: str, days: int, windows: int, only: str | None,
+         parallel: bool, workers: int | None) -> None:
     base = Config.load(config_path)
     setup_logging("WARNING")
 
@@ -309,11 +389,13 @@ def main(config_path: str, days: int, windows: int, only: str | None) -> None:
         f"a couple of minutes.\n"
     )
 
-    results = []
-    for preset in selected:
-        console().print(f"  evaluating [cyan]{preset.key}[/cyan]...")
-        results.append(_evaluate(preset, base, days, windows))
+    def _progress(key: str) -> None:
+        console().print(f"  evaluating [cyan]{key}[/cyan]...")
 
+    results = evaluate_presets(
+        selected, base, days, windows,
+        parallel=parallel, max_workers=workers, progress=_progress,
+    )
     ranked = _rank(results)
 
     table = Table(title=f"Walk-forward comparison ({windows} windows over {days}d)")

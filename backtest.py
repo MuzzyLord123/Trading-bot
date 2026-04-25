@@ -27,15 +27,25 @@ STATS_PATH = Path("reports/backtest_stats.json")
               help="If > 1, run a walk-forward backtest with fresh portfolio per window.")
 @click.option("--no-cache", is_flag=True, default=False,
               help="Skip the on-disk OHLCV cache and re-download everything.")
+@click.option("--parallel/--no-parallel", default=True,
+              help="Run walk-forward windows in a process pool. Roughly Nx "
+                   "faster on N cores; falls back to serial if subprocess "
+                   "creation fails. No effect on a single-pass backtest "
+                   "(those are inherently sequential).")
+@click.option("--workers", type=int, default=None,
+              help="Override worker count for --parallel (default: one per CPU).")
 def main(config_path: str, days: int, no_csv: bool, windows: int,
-         walk_forward: int, no_cache: bool) -> None:
+         walk_forward: int, no_cache: bool, parallel: bool, workers: int | None) -> None:
     cfg = Config.load(config_path)
     setup_logging(cfg.logging.level)
     bt = build_backtester(cfg)
 
     if walk_forward > 1:
         data = bt.load_data(days, use_cache=not no_cache)
-        wf = bt.walk_forward(days=days, n_windows=walk_forward, data=data)
+        wf = bt.walk_forward(
+            days=days, n_windows=walk_forward, data=data,
+            parallel=parallel, max_workers=workers,
+        )
         wtable = Table(title=f"Walk-forward: {walk_forward} windows over {days}d")
         cols = ("window", "start", "end", "total_return_pct", "sharpe", "max_drawdown_pct", "trades")
         for col in cols:

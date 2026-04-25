@@ -281,6 +281,8 @@ class Backtester:
         days: int = 180,
         n_windows: int = 4,
         data: dict[str, pd.DataFrame] | None = None,
+        parallel: bool = False,
+        max_workers: int | None = None,
     ) -> dict:
         """Split history into ``n_windows`` non-overlapping slices and run a
         fresh backtest on each with a reset portfolio and risk state.
@@ -289,6 +291,13 @@ class Backtester:
         run), this reruns the strategy independently per window. It's closer to
         a true out-of-sample check: wins in one window don't fund losses in the
         next, and risk halts reset at each boundary.
+
+        Set ``parallel=True`` to run windows in a process pool. Each window
+        is fully independent so this is a clean speedup; on a 4-window /
+        4-core box it's roughly 4x. Default is serial because (a) tests
+        rely on in-process module mocks that don't survive a fork and
+        (b) on tiny universes the pickle overhead dominates the saved
+        compute.
 
         Returns a dict with ``windows`` (per-window stats) and ``summary``
         (aggregate and consistency metrics).
@@ -306,7 +315,10 @@ class Backtester:
             )
         size = len(timestamps) // n_windows
 
-        per_window: list[dict] = []
+        # Pre-build the (window_data, start_ts, end_ts) tuples for every
+        # window. We do the slicing in the parent so each worker receives a
+        # ready-to-run subset and doesn't re-do the alignment work.
+        jobs: list[tuple[int, dict[str, pd.DataFrame], str, str]] = []
         for i in range(n_windows):
             start = i * size
             end = len(timestamps) if i == n_windows - 1 else (i + 1) * size
@@ -316,15 +328,21 @@ class Backtester:
                 for sym, df in data.items()
             }
             window_data = {k: v for k, v in window_data.items() if not v.empty}
-            if not window_data:
-                continue
-            self.risk.reset()
-            sub_result = self.run(data=window_data, write_csv=False)
-            stats = sub_result.stats(self.cfg.trading.starting_capital)
-            stats["window"] = i + 1
-            stats["start"] = str(timestamps[start])
-            stats["end"] = str(timestamps[end - 1])
-            per_window.append(stats)
+            if window_data:
+                jobs.append((i + 1, window_data, str(timestamps[start]), str(timestamps[end - 1])))
+
+        per_window: list[dict] = []
+        if parallel and len(jobs) > 1:
+            per_window = self._run_windows_parallel(jobs, max_workers)
+        else:
+            for window_idx, window_data, ts_start, ts_end in jobs:
+                self.risk.reset()
+                sub_result = self.run(data=window_data, write_csv=False)
+                stats = sub_result.stats(self.cfg.trading.starting_capital)
+                stats["window"] = window_idx
+                stats["start"] = ts_start
+                stats["end"] = ts_end
+                per_window.append(stats)
 
         # Aggregate: average return, share of profitable windows, dispersion.
         returns = [w["total_return_pct"] for w in per_window]
@@ -340,6 +358,69 @@ class Backtester:
             "best_window_return_pct": round(max(returns), 2) if returns else 0.0,
         }
         return {"windows": per_window, "summary": summary}
+
+    def _run_windows_parallel(
+        self,
+        jobs: list[tuple[int, dict[str, pd.DataFrame], str, str]],
+        max_workers: int | None,
+    ) -> list[dict]:
+        """Submit each (window_idx, data, start, end) job to a process
+        pool and return the per-window stats in original window order.
+
+        Falls back to a serial loop on any executor-construction failure
+        (some sandboxed environments forbid spawning subprocesses); a
+        warning is logged so the operator knows the speedup is gone but
+        the run itself still completes."""
+        try:
+            from concurrent.futures import ProcessPoolExecutor, as_completed
+        except ImportError:
+            log.warning("ProcessPoolExecutor unavailable; running serially")
+            return self._run_windows_serial(jobs)
+
+        # Pickle-friendly args: serialize cfg via the dataclass and let the
+        # worker reconstruct strategy + risk on its side. Backtester instances
+        # carry strategies that may hold non-picklable state (compiled
+        # regexes etc.), so we never ship `self` across the boundary.
+        starting_capital = self.cfg.trading.starting_capital
+
+        results: dict[int, dict] = {}
+        try:
+            with ProcessPoolExecutor(max_workers=max_workers) as pool:
+                futures = {
+                    pool.submit(
+                        _walk_forward_worker,
+                        self.cfg, window_data, starting_capital,
+                        window_idx, ts_start, ts_end,
+                    ): window_idx
+                    for window_idx, window_data, ts_start, ts_end in jobs
+                }
+                for fut in as_completed(futures):
+                    idx = futures[fut]
+                    try:
+                        results[idx] = fut.result()
+                    except Exception as exc:
+                        log.error("walk-forward window %d failed: %s", idx, exc)
+        except Exception as exc:
+            log.warning("parallel walk-forward failed (%s); falling back to serial", exc)
+            return self._run_windows_serial(jobs)
+
+        # Stable order: by window index ascending so consumers see
+        # chronological windows even though they completed in arbitrary order.
+        return [results[idx] for idx in sorted(results)]
+
+    def _run_windows_serial(
+        self, jobs: list[tuple[int, dict[str, pd.DataFrame], str, str]],
+    ) -> list[dict]:
+        out: list[dict] = []
+        for window_idx, window_data, ts_start, ts_end in jobs:
+            self.risk.reset()
+            sub_result = self.run(data=window_data, write_csv=False)
+            stats = sub_result.stats(self.cfg.trading.starting_capital)
+            stats["window"] = window_idx
+            stats["start"] = ts_start
+            stats["end"] = ts_end
+            out.append(stats)
+        return out
 
     def load_data(self, days: int, use_cache: bool = True) -> dict[str, pd.DataFrame]:
         """Fetch OHLCV for every configured symbol, serving from the on-disk
@@ -634,6 +715,38 @@ def _aligned_timestamps(data: dict[str, pd.DataFrame]) -> list:
         ts = pd.Index(df["timestamp"])
         index = ts if index is None else index.union(ts)
     return sorted(index) if index is not None else []
+
+
+def _walk_forward_worker(
+    cfg: Config,
+    window_data: dict[str, pd.DataFrame],
+    starting_capital: float,
+    window_idx: int,
+    ts_start: str,
+    ts_end: str,
+) -> dict:
+    """Run one walk-forward window inside a worker process.
+
+    Module-level so ``pickle`` can find it across the
+    ProcessPoolExecutor boundary. Reconstructs the strategy and risk
+    manager from the cfg rather than relying on the parent's instances
+    (those carry references that don't always survive a fork)."""
+    filter_cfg = dict(cfg.strategy.filter or {})
+    if int(filter_cfg.get("earnings_blackout_days", 0)) > 0:
+        filter_cfg["earnings_symbols"] = list(cfg.trading.symbols)
+    mtf_cfg = dict(getattr(cfg.strategy, "multi_timeframe", {}) or {})
+    strategy = build_strategy_from_config(
+        cfg.strategy.name, cfg.strategy.params, cfg.strategy.ensemble,
+        filter_cfg, multi_timeframe_cfg=mtf_cfg,
+    )
+    risk = RiskManager(cfg.risk)
+    bt = Backtester(cfg, exchange=None, strategy=strategy, risk=risk)
+    sub_result = bt.run(data=window_data, write_csv=False)
+    stats = sub_result.stats(starting_capital)
+    stats["window"] = window_idx
+    stats["start"] = ts_start
+    stats["end"] = ts_end
+    return stats
 
 
 def build_backtester(cfg: Config) -> Backtester:

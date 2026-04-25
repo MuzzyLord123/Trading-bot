@@ -1031,28 +1031,46 @@ with backtest_tab:
     with cmp_col3:
         st.caption(
             "Each preset takes 30-90 seconds depending on universe size. "
-            "Six presets sequentially, so allow a few minutes."
+            "With parallelism on (default) the six presets run concurrently "
+            "on your CPU cores, so total wall time is roughly the slowest "
+            "single preset rather than their sum."
         )
+    cmp_parallel = st.toggle(
+        "Parallel (process pool)", value=True,
+        help="Run the six presets concurrently in subprocesses. Each preset's "
+             "walk-forward is fully independent so this is a clean speedup. "
+             "Turn off if your sandbox forbids subprocess spawning, or for "
+             "deterministic-order log output during debugging.",
+    )
 
     if st.button("Compare strategies", type="primary",
                  help="Runs scripts/recommend_config.py-equivalent inline. "
                       "Does NOT modify config.yaml. Read the table, decide, "
                       "edit Config tab manually if you want to adopt the winner."):
         try:
-            from scripts.recommend_config import PRESETS, _evaluate, _rank
+            from scripts.recommend_config import PRESETS, evaluate_presets, _rank
             from bot.config import Config as _Config
             base_cfg = _Config.load(CONFIG_PATH)
         except Exception as exc:
             st.error(f"Could not load base config: {exc}")
         else:
-            results: list[dict[str, Any]] = []
+            mode_label = "parallel" if cmp_parallel else "serial"
             with st.status(
-                f"Comparing {len(PRESETS)} presets over {cmp_days}d in {cmp_windows} windows…",
+                f"Comparing {len(PRESETS)} presets over {cmp_days}d "
+                f"in {cmp_windows} windows ({mode_label})…",
                 expanded=True,
             ) as status:
-                for preset in PRESETS:
-                    st.write(f"Evaluating **{preset.key}**…")
-                    results.append(_evaluate(preset, base_cfg, int(cmp_days), int(cmp_windows)))
+                done: list[str] = []
+                placeholder = st.empty()
+                def _on_progress(key: str) -> None:
+                    done.append(key)
+                    placeholder.write(
+                        f"Done: {', '.join(done)} ({len(done)}/{len(PRESETS)})"
+                    )
+                results = evaluate_presets(
+                    PRESETS, base_cfg, int(cmp_days), int(cmp_windows),
+                    parallel=cmp_parallel, progress=_on_progress,
+                )
                 status.update(label="Comparison complete", state="complete")
 
             ranked = _rank(results)
