@@ -11,7 +11,7 @@ from .config import Config
 from .execution import buy_fill, sell_fill
 from .factory import build_exchange
 from .logger import CsvLogger, console
-from .notifications import NullNotifier, TelegramNotifier
+from .notifications import DesktopNotifier, MultiNotifier, NullNotifier, TelegramNotifier
 from .portfolio import Portfolio, Position
 from .risk import RiskManager
 from .state import DEFAULT_PATH as STATE_PATH, load_portfolio, save_portfolio
@@ -54,13 +54,22 @@ class TradingEngine:
         self.equity_log = CsvLogger(
             cfg.logging.equity_log, ["timestamp", "equity", "cash", "open_positions"]
         )
-        self.notifier = (
-            TelegramNotifier(
-                cfg.secrets["telegram_bot_token"], cfg.secrets["telegram_chat_id"]
-            )
-            if cfg.notifications.telegram
-            else NullNotifier()
+        # Notification channels. Telegram is always-on when configured
+        # (you wouldn't enable it just to filter most messages out).
+        # Desktop pop-ups are gated by severity because the same trade
+        # log that's fine in a Telegram chat is too noisy as banners on
+        # a busy day.
+        remote_channels: list = []
+        if cfg.notifications.telegram:
+            remote_channels.append(TelegramNotifier(
+                cfg.secrets.get("telegram_bot_token", ""),
+                cfg.secrets.get("telegram_chat_id", ""),
+            ))
+        self.notifier = MultiNotifier(remote_channels) if remote_channels else NullNotifier()
+        self.desktop = (
+            DesktopNotifier() if cfg.notifications.desktop else None
         )
+        self._desktop_min_severity = cfg.notifications.desktop_min_severity
         self._halted = False
         self._cooldown_ticks_left: dict[str, int] = {}
         self._bars_held: dict[str, int] = {}
@@ -69,6 +78,36 @@ class TradingEngine:
         # 5-minute poll on an hourly timeframe would decay these 12x faster
         # than the config intends.
         self._last_candle_ts: dict[str, object] = {}
+
+    # Severity ranking for desktop pop-up gating. Higher index = louder.
+    _SEVERITY_ORDER = {"trades": 0, "warnings": 1, "errors": 2}
+
+    def _notify(self, message: str, severity: str = "trades", title: str | None = None) -> None:
+        """Fan a short notification out to remote channels (Telegram if
+        configured) and, when severity is at or above the configured
+        threshold, to a desktop pop-up.
+
+        Keep messages SHORT - desktop banners truncate around 100 chars
+        on macOS and look cluttered with multi-line bodies.
+        """
+        # Remote channels (Telegram) get every message - the user
+        # opted in to that channel knowing it would be chatty.
+        try:
+            self.notifier.send(message)
+        except Exception as exc:
+            log.debug("remote notifier failed: %s", exc)
+
+        # Desktop is gated by severity so trade-by-trade pop-ups don't
+        # bury the genuinely important "trading halted" banner.
+        if self.desktop is None:
+            return
+        threshold = self._SEVERITY_ORDER.get(self._desktop_min_severity, 0)
+        level = self._SEVERITY_ORDER.get(severity, 0)
+        if level >= threshold:
+            try:
+                self.desktop.send(message, title=title or "Trading Bot")
+            except Exception as exc:
+                log.debug("desktop notifier failed: %s", exc)
 
     def _persist(self) -> None:
         """Snapshot the portfolio to disk. Called after every open/close
@@ -99,7 +138,14 @@ class TradingEngine:
             return
         log.info("reconciliation: %s", report.summary())
         if not report.clean:
-            self.notifier.send(f"Reconciled with broker: {report.summary()}")
+            # Reconciliation drift means the broker disagreed with our
+            # local view - treat as a warning so it pops up on the desktop
+            # even when severity is set to filter routine trade traffic.
+            self._notify(
+                f"Reconciled with broker: {report.summary()}",
+                severity="warnings",
+                title="Reconciliation",
+            )
             self._persist()
 
     def run_forever(self) -> None:
@@ -109,8 +155,9 @@ class TradingEngine:
             self.cfg.trading.mode,
             extra={"markup": True},
         )
-        self.notifier.send(
-            f"Trading bot started in {self.cfg.trading.mode} mode on Trading 212"
+        self._notify(
+            f"Bot started in {self.cfg.trading.mode} mode",
+            severity="warnings", title="Trading Bot",
         )
         # Live mode: reconcile against the broker before the first tick
         # so we don't act on stale local state. Paper mode has no broker
@@ -122,10 +169,17 @@ class TradingEngine:
                 self.tick()
             except KeyboardInterrupt:
                 log.info("Interrupted – shutting down")
-                self.notifier.send("Trading bot stopped (interrupt)")
+                self._notify(
+                    "Bot stopped (interrupt)",
+                    severity="warnings", title="Trading Bot",
+                )
                 return
             except Exception as exc:
                 log.exception("tick error: %s", exc)
+                self._notify(
+                    f"Tick error: {exc}"[:140],
+                    severity="errors", title="Trading Bot ERROR",
+                )
             time.sleep(self.cfg.trading.poll_interval_seconds)
 
     def tick(self) -> None:
@@ -202,7 +256,10 @@ class TradingEngine:
         if halt_reason and not self._halted:
             self._halted = True
             log.warning("Trading halted: %s", halt_reason)
-            self.notifier.send(f"Trading halted: {halt_reason}")
+            self._notify(
+                f"Trading halted: {halt_reason}",
+                severity="errors", title="Trading HALTED",
+            )
         if halt_reason is None:
             self._halted = False
             for symbol, df in candles.items():
@@ -299,8 +356,9 @@ class TradingEngine:
         )
         log.info("OPEN %s %.6f @ %.4f (stop %.4f, tp %.4f)",
                  symbol, amount, fill_price, sizing.stop_loss, sizing.take_profit)
-        self.notifier.send(
-            f"OPEN {symbol} {amount:.6f} @ {fill_price:.4f}"
+        self._notify(
+            f"OPEN {symbol} {amount:.4f} @ {fill_price:.2f}",
+            severity="trades", title="Trading Bot - OPEN",
         )
         self._persist()
 
@@ -395,8 +453,14 @@ class TradingEngine:
         )
         log.info("CLOSE %s %.6f @ %.4f pnl=%.2f (%s)",
                  pos.symbol, amount, fill_price, pnl, reason)
-        self.notifier.send(
-            f"CLOSE {pos.symbol} @ {fill_price:.4f} pnl={pnl:.2f} ({reason})"
+        # A losing close on a stop-loss is more important than a normal
+        # take-profit; bump severity so it pops on the desktop even when
+        # routine trade traffic is filtered.
+        sev = "warnings" if (pnl < 0 and reason == "stop_loss") else "trades"
+        title = "Trading Bot - STOP HIT" if sev == "warnings" else "Trading Bot - CLOSE"
+        self._notify(
+            f"CLOSE {pos.symbol} @ {fill_price:.2f} pnl={pnl:+.2f} ({reason})",
+            severity=sev, title=title,
         )
         self._persist()
 

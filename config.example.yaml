@@ -224,4 +224,18 @@ logging:
   equity_log: logs/equity.csv
 
 notifications:
+  # Telegram bot. Requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env.
+  # When enabled, every event reaches you wherever you are.
   telegram: false
+
+  # Native OS desktop pop-up. macOS / Linux / Windows. No external
+  # service or token required. Useful when you're sitting at the
+  # machine; turn off Telegram to avoid double-pinging.
+  desktop: false
+
+  # Filter desktop pop-ups. Telegram (if on) always gets every message.
+  #   trades   - every open and close  (most verbose)
+  #   warnings - opens/closes elevated by reconciliation drift, stop-loss
+  #              hits, bot start/stop  (default)
+  #   errors   - only halts and errors (quietest)
+  desktop_min_severity: warnings

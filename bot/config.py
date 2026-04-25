@@ -99,6 +99,12 @@ class LoggingConfig:
 @dataclass
 class NotificationsConfig:
     telegram: bool = False
+    # Native OS desktop pop-up on errors and trade events. macOS / Linux /
+    # Windows. No external service or token required.
+    desktop: bool = False
+    # Filter desktop pop-ups by event severity. Lower = noisier.
+    # Always | Errors-and-halts | Errors-only | Off (handled by .desktop above).
+    desktop_min_severity: str = "trades"  # trades | warnings | errors
 
 
 @dataclass
